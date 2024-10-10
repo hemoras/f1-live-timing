@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise'); // Utiliser mysql2 pour une utilisation avec Promises
+const unzipper = require('unzipper');
+const checkAndExtractDirectory = require('./utils');
 
 // Récupérer les paramètres de la ligne de commande (saison et manche)
 const saison = process.argv[2];
@@ -12,19 +14,19 @@ if (!saison || !manche) {
     process.exit(1);
 }
 
-const directoryPath = `./${saison}-${manche}`;
-const pilotes = [2, 3, 5, 7, 8, 9, 11, 14, 18, 19, 20, 26, 27, 30, 31, 33, 44, 55, 77, 94];
+const directoryPath = `./tfeed-data/${saison}-${manche}`;
+const pilotes = [3, 5, 6, 7, 8, 9, 11, 12, 14, 19, 20, 21, 22, 26, 27, 30, 33, 44, 55, 77, 88, 94];
 
 // Configuration de la connexion à la base de données
 const dbConfig = {
     host: 'localhost',     // Remplacez par votre hôte
-    user: 'your_username', // Remplacez par votre nom d'utilisateur
-    password: 'your_password', // Remplacez par votre mot de passe
-    database: 'your_database'  // Remplacez par le nom de votre base de données
+    user: 'root', // Remplacez par votre nom d'utilisateur
+    password: '', // Remplacez par votre mot de passe
+    database: 'f1-history'  // Remplacez par le nom de votre base de données
 };
 
 // Fonction pour comparer et insérer dans la base de données
-async function compareAndInsert(connection, newData, oldData) {
+async function compareAndInsert(connection, newData, oldData, initialTiming) {
     for (const newItem of newData) {
         const numero = newItem.numero;
         const oldItem = oldData.find(item => item.numero === numero);
@@ -32,7 +34,7 @@ async function compareAndInsert(connection, newData, oldData) {
         if (oldItem) {
             // Comparaison des champs
             const differences = {};
-            if (newItem.position !== oldItem.position) differences.position = newItem.position;
+            if (newItem.position !== oldItem.position) differences.position = parseInt(newItem.position, 10);
             if (newItem.pneus.type !== oldItem.pneus.type) differences.pneus = newItem.pneus.type;
             if (newItem.pneus.tours !== oldItem.pneus.tours) differences.pneus_tours = newItem.pneus.tours;
             if (newItem.tours !== oldItem.tours) differences.tours = newItem.tours;
@@ -47,13 +49,23 @@ async function compareAndInsert(connection, newData, oldData) {
 
             // Si des différences sont trouvées, insérer dans la base de données
             if (Object.keys(differences).length > 0) {
-                const insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, 
-                    ${Object.keys(differences).join(', ')}) VALUES (?, ?, ?, 
-                    ${Object.values(differences).map(() => '?').join(', ')})`;
-                
-                await connection.execute(insertQuery, [saison, manche, numero, ...Object.values(differences)]);
-                console.log(`Données insérées pour le numéro ${numero}:`, differences);
+                // Construction des colonnes et des valeurs pour l'insertion
+                const insertColumns = `saison, manche, numero, timing, ${Object.keys(differences).map(col => `\`${col}\``).join(', ')}`;
+                const insertValues = `?, ?, ?, ?, ${Object.values(differences).map(() => '?').join(', ')}`;
+            
+                // Construction de la clause ON DUPLICATE KEY UPDATE
+                const updateClause = Object.keys(differences)
+                    .map(key => `\`${key}\` = ?`) // "position = ?" pour chaque clé
+                    .join(', ');
+            
+                // Construction de la requête finale
+                const insertQuery = `INSERT INTO live_timing_event (${insertColumns}) VALUES (${insertValues}) ON DUPLICATE KEY UPDATE ${updateClause}`;
+            
+                console.log([saison, manche, numero, newItem.timing - initialTiming, ...Object.values(differences)]);
+            
+                await connection.execute(insertQuery, [saison, manche, numero, newItem.timing - initialTiming, ...Object.values(differences), ...Object.values(differences)]);
             }
+            
         }
     }
 }
@@ -99,6 +111,7 @@ async function processFile(filePath) {
             const dernierPneu = pneus[pneus.length - 1];
 
             return {
+                timing,
                 numero: pilotes[index],
                 abandon,
                 tours,
@@ -139,8 +152,10 @@ async function main() {
 
     try {
         // Lire et traiter tous les fichiers state*.js dans le répertoire
-        const files = await fs.promises.readdir(directoryPath);
+        //const files = await fs.promises.readdir(directoryPath);
+        const files = await checkAndExtractDirectory(directoryPath);
         const stateFiles = files.filter(file => file.startsWith('state') && file.endsWith('.js')).sort();
+        const initialTiming = parseInt(stateFiles[0].replace(/state_(\d+)_(\d+)\.js/, (_, num1, num2) => `${num1}${num2}`));        
 
         let previousData = null;
 
@@ -149,7 +164,7 @@ async function main() {
             const currentData = await processFile(filePath);
             
             if (previousData) {
-                await compareAndInsert(connection, currentData.lignes, previousData.lignes);
+                await compareAndInsert(connection, currentData.lignes, previousData.lignes, initialTiming);
             }
             previousData = currentData; // Mettre à jour pour la prochaine comparaison
         }

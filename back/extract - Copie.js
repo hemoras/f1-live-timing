@@ -12,7 +12,7 @@ if (!saison || !manche) {
 }
 
 // Construire le chemin du répertoire basé sur la saison et la manche
-const directoryPath = `./${saison}-${manche}`;
+const directoryPath = `./tfeed-data/${saison}-${manche}`;
 
 // Tableau des numéros des pilotes
 const pilotes = [2, 3, 5, 7, 8, 9, 11, 14, 18, 19, 20, 26, 27, 30, 31, 33, 44, 55, 77, 94];
