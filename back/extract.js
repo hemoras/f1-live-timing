@@ -27,10 +27,11 @@ const dbConfig = {
 
 // Fonction pour comparer et insérer dans la base de données
 async function compareAndInsert(connection, newData, oldData, initialTiming) {
-    for (const newItem of newData) {
+    for (const newItem of newData.lignes) {
         const numero = newItem.numero;
-        const oldItem = oldData.find(item => item.numero === numero);
+        const oldItem = oldData.lignes.find(item => item.numero === numero);
 
+        // Comparaison des lignes pilotes
         if (oldItem) {
             // Comparaison des champs
             const differences = {};
@@ -61,12 +62,32 @@ async function compareAndInsert(connection, newData, oldData, initialTiming) {
                 // Construction de la requête finale
                 const insertQuery = `INSERT INTO live_timing_event (${insertColumns}) VALUES (${insertValues}) ON DUPLICATE KEY UPDATE ${updateClause}`;
             
-                console.log([saison, manche, numero, newItem.timing - initialTiming, ...Object.values(differences)]);
+                //console.log([saison, manche, numero, newItem.timing - initialTiming, ...Object.values(differences)]);
             
                 await connection.execute(insertQuery, [saison, manche, numero, newItem.timing - initialTiming, ...Object.values(differences), ...Object.values(differences)]);
             }
             
         }
+    }
+    // Comparaison des infos générales
+    const differences = {};
+    if (newData.race_status !== oldData.race_status) differences.race_status = parseInt(newData.race_status, 10);
+    if (Object.keys(differences).length > 0) {
+        // Construction des colonnes et des valeurs pour l'insertion
+        const insertColumns = `saison, manche, timing, ${Object.keys(differences).map(col => `\`${col}\``).join(', ')}`;
+        const insertValues = `?, ?, ?, ${Object.values(differences).map(() => '?').join(', ')}`;
+
+        // Construction de la clause ON DUPLICATE KEY UPDATE
+        const updateClause = Object.keys(differences)
+            .map(key => `\`${key}\` = ?`) // "position = ?" pour chaque clé
+            .join(', ');
+
+        // Construction de la requête finale
+        const insertQuery = `INSERT INTO live_timing_event (${insertColumns}) VALUES (${insertValues}) ON DUPLICATE KEY UPDATE ${updateClause}`;
+
+        console.log([saison, manche, newData.timing - initialTiming, ...Object.values(differences)]);
+
+        await connection.execute(insertQuery, [saison, manche, newData.timing - initialTiming, ...Object.values(differences), ...Object.values(differences)]);
     }
 }
 
@@ -81,18 +102,18 @@ async function processFile(filePath) {
     const args = eval(`[${argsString}]`);
     
     const [
-        race_status,
+        tdb1,
         timing,
-        [tdb1, tdb2, temps_restant],
+        [race_status, tdb2, temps_restant],
         [sec, temperature_piste, temperature_air, humidite, sens_vent, vitesse_vent, pression],
         lignes
     ] = args;
 
     // Construire l'objet JSON
     const result = {
-        race_status,
-        timing,
         tdb1,
+        timing,
+        race_status,
         tdb2,
         temps_restant,
         sec,
@@ -164,7 +185,7 @@ async function main() {
             const currentData = await processFile(filePath);
             
             if (previousData) {
-                await compareAndInsert(connection, currentData.lignes, previousData.lignes, initialTiming);
+                await compareAndInsert(connection, currentData, previousData, initialTiming);
             }
             previousData = currentData; // Mettre à jour pour la prochaine comparaison
         }
