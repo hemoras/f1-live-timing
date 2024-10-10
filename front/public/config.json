@@ -1,0 +1,14 @@
+{
+    "couleurs": [
+        {
+            "id": 0,
+            "couleur": "violet",
+            "valeur": "#FFFFFF"
+        },
+        {
+            "id": 1,
+            "couleur": "vert",
+            "valeur": "#00FF00"
+        }
+    ]
+}

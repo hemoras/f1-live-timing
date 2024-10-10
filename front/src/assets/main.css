@@ -1,0 +1,290 @@
+@font-face {
+  font-family: "Futura Heavy";
+  src: url('http://localhost:5173/fonts/Futura Heavy font.ttf');
+}
+
+@font-face {
+  font-family: "Futura Light";
+  src: url('http://localhost:5173/fonts/futura light bt.ttf');
+}
+
+@font-face {
+  font-family: "Futura Bold";
+  src: url('http://localhost:5173/fonts/Futura Bold font.ttf');
+}
+
+body {
+  background-color: #13151D;
+}
+
+table.classement_tfeed {
+  border-collapse: collapse;
+  width: 1280;
+  font-family: "Futura Light";
+  color: white;
+  margin: auto;
+}
+
+table.classement_tfeed tr {
+  background-color: #13151D;
+  border-bottom: 2px solid #222222;
+  height: 35px;
+}
+
+table.classement_tfeed th {
+  text-align: left;
+  font-weight: normal;
+  font-size: 0.8em;
+}
+
+table.classement_tfeed tr.modele_17 {
+  height: 34px;
+}
+
+table.classement_tfeed tr.modele_20 {
+  height: 29px;
+}
+
+table.classement_tfeed tr.modele_22 {
+  height: 27px;
+}
+
+table.classement_tfeed tr.modele_24 {
+  height: 25px;
+}
+
+@-moz-document url-prefix() {
+  td {
+      height: auto;
+  }
+}
+
+table.classement_tfeed tr:last-child {
+  border-bottom: 0px;
+}
+
+table.classement_tfeed .position,
+table.classement_tfeed .numero,
+table.classement_tfeed .pilote {
+  font-family: "Futura Heavy";
+}
+
+table.classement_tfeed .position,
+table.classement_tfeed .tours,
+table.classement_tfeed .gap,
+table.classement_tfeed .interval,
+table.classement_tfeed .pit {
+  text-align: right;
+  padding-right: 15px;
+}
+
+table.classement_tfeed .gap,
+table.classement_tfeed .interval {
+  width: 70px;
+}
+
+table.classement_tfeed .drs {
+  text-align: center;
+  width: 30px;
+}
+
+table.classement_tfeed .tours {
+  width: 40px;
+}
+
+table.classement_tfeed .temps_tour {
+  width: 130px;
+}
+
+table.classement_tfeed .temps_tour,
+table.classement_tfeed .secteur,
+table.classement_tfeed .numero {
+  text-align: center;
+}
+
+table.classement_tfeed .numero {
+  width: 50px;
+  text-align: center;
+}
+
+table.classement_tfeed .secteur {
+  width: 110px;
+}
+
+table.classement_tfeed .position {
+  color: #4FD0E1;
+  width: 50px;
+}
+
+table.classement_tfeed .pneus {
+  font-size: 0.7em;
+  width: 70px;
+  text-align: left;
+  padding-left: 15px;
+}
+
+#race_status {
+  margin-top: 10px;
+  width: 150px;
+  height: 40px;
+  line-height: 40px;
+  border-radius: 5px;
+  text-align: center;
+  margin-left: auto;
+  margin-right: auto;
+  font-family: "Futura Heavy";
+}
+
+#race_status.modele_24 {
+  margin-top: 7px;
+  height: 35px;
+  line-height: 35px;
+}
+
+.green_flag {
+  background-color: #008000;
+  color: white;
+}
+
+.yellow_flag {
+  background-color: #FFFF00;
+  color: black;
+}
+
+.checkered_flag {
+  background-color: #fff;
+  background-image: linear-gradient(45deg, black 25%, transparent 25%, transparent 75%, black 75%), linear-gradient(45deg, black 25%, transparent 25%, transparent 75%, black 75%);
+  background-size: 30px 30px;
+  background-position: 0 0, 15px 15px;
+}
+
+.red_flag {
+  background-color: red;
+  color: white;
+}
+
+.grey_flag {
+  background-color: #444444;
+  color: white;
+  font-size: 1.3em;
+}
+
+#lap_info {
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 10px;
+  width: 170px;
+  height: 30px;
+  line-height: 30px;
+  border-bottom-left-radius: 5px;
+  border-bottom-right-radius: 5px;
+  background-color: rgb(82, 82, 82);
+  color: white;
+  text-align: center;
+  font-size: 1.2em;
+  font-family: "Futura Heavy";
+}
+
+table.classement_tfeed .green {
+  color: #00D800;
+}
+
+table.classement_tfeed .purple {
+  color: #FF26FF;
+}
+
+table.classement_tfeed .red {
+  color: #FF2626;
+}
+
+table.classement_tfeed td.pit {
+  width: 20px;
+  color: #FF2626;
+}
+
+table.classement_tfeed #weather {
+  padding-left: 30px;
+  padding-top: 10px;
+  padding-bottom: 30px;
+  float: left;
+}
+
+table.classement_tfeed #weather table {
+  color: white;
+  font-size: 0.8em;
+}
+
+table.classement_tfeed #weather table tr {
+  height: 12px;
+  border-bottom: 0px;
+}
+
+table.classement_tfeed #weather table tr td {
+  width: 170px;
+  border-bottom: 0px;
+}
+
+#timer {
+  width: 100px;
+  margin-top: 20px;
+  float: right;
+  font-family: "Futura Heavy";
+  color: white;
+  font-size: 1.2em;
+  text-align: right;
+  padding-right: 30px;
+}
+
+table.classement_tfeed .couleur_voiture {
+  width: 10px;
+  height: 20px;
+  border-radius: 5px;
+  float: left;
+  margin-right: 8px;
+  border: 1px solid #101010;
+}
+
+.pneu_picto {
+  font-family: Arial, Helvetica, sans-serif;
+  float: left;
+  margin-right: 5px;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 1em;
+  font-weight: bold;
+}
+
+.blanc {
+  border: 2px solid #FFFFFF;
+}
+
+.drs_0 {
+  margin-left: auto;
+  margin-right: auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 9px;
+  background-color: #777777;
+}
+
+.drs_1 {
+  margin-left: auto;
+  margin-right: auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 9px;
+  border: 1px solid #FFFFFF;
+}
+
+.drs_2 {
+  margin-left: auto;
+  margin-right: auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 9px;
+  border: 1px solid #FFFFFF;
+  background-color: #00D800;
+}

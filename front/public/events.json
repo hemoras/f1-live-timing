@@ -1,0 +1,61 @@
+{
+    "pilotes": [
+        {
+            "numero":44,
+            "nom": "L.HAMILTON",
+            "pneus": {
+                "type": "S",
+                "couleur": "#FF0000"
+            }
+        },
+        {
+            "numero":33,
+            "nom": "M.VERSTAPPEN",
+            "pneus": {
+                "type": "M",
+                "couleur": "#FFC300"
+            }
+        }
+    ],
+    "events": [
+        {
+            "timing": 500,
+            "type": "general",
+            "flag": 5
+        },
+        {
+            "timing": 1000,
+            "type": "pilote",
+            "numero": 44,
+            "S1": {
+                "valeur": 32.154,
+                "couleur": "#000000"
+            }
+        },
+        {
+            "timing": 3000,
+            "type": "pilote",
+            "position": 2,
+            "numero": 44,
+            "S3" : {
+                "valeur": 23.547,
+                "couleur": "#33ff64"
+            },
+            "tour": {
+                "valeur": "1.21.541",
+                "couleur": "#33ff64"
+            },
+            "pneus": {
+                "valeur": "S",
+                "couleur": "#FF0000",
+                "tours": "1"
+            }
+        },
+        {
+            "timing": 3000,
+            "type": "pilote",
+            "numero": 33,
+            "position": 1
+        }
+    ]
+}
