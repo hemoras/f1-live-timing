@@ -14,8 +14,6 @@ if (!saison || !manche) {
     process.exit(1);
 }
 
-const directoryPath = `./tfeed-data/${saison}-${manche}`;
-
 // Configuration de la connexion à la base de données
 const dbConfig = {
     host: 'localhost',     // Remplacez par votre hôte
@@ -181,50 +179,84 @@ async function processFile(filePath, pilotes) {
     return result;
 }
 
+async function extractFromTfeed(connection, saison, manche) {
+    const directoryPath = `./tfeed-data/${saison}-${manche}`;
+    const pilotes = await getNumeros(connection, saison, manche);    
+    const nbPilotes = pilotes.length;
+
+    // Lire et traiter tous les fichiers state*.js dans le répertoire
+    const files = await checkAndExtractDirectory(directoryPath);
+    const stateFiles = files.filter(file => file.startsWith('state') && file.endsWith('.js')).sort();
+    const initialTiming = parseInt(stateFiles[0].replace(/state_(\d+)_(\d+)\.js/, (_, num1, num2) => `${num1}${num2}`));
+    
+    
+    // Création des infos générales
+    const modele = nbPilotes % 2 === 0 ? nbPilotes : nbPilotes + 1;
+    insertLiveTiming(connection, saison, manche, true, true, true, modele);
+
+    let previousData = null;
+    let nbTours = await getNbTours(saison, manche, connection);
+    let data = {
+        toursMax: 0,
+        nbTours: nbTours
+    };
+
+    for (const file of stateFiles) {
+        const filePath = path.join(directoryPath, file);
+        const currentData = await processFile(filePath, pilotes);
+        const nbLignes = Object.keys(currentData.lignes).length;        
+        if (nbLignes !== nbPilotes) {
+            console.log(`Erreur : il y a ${nbLignes} dans les fichiers de data Live Timing et ${pilotes.length} pilotes trouvés en BDD. Interruption du process`);
+            process.exit();
+        }
+
+        if (previousData) {
+            await compareAndInsert(connection, currentData, previousData, initialTiming, data);
+        } else {
+            for (const ligne of currentData.lignes) {
+                const numero = ligne.numero;
+                const position = ligne.position;
+                const pneus = ligne.pneus.type;
+
+                const insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position, pneus) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?, pneus=?`;
+                await connection.execute(insertQuery, [saison, manche, numero, position, pneus, position, pneus]);
+            }
+            console.log(`Ecriture des pilotes OK`);
+        }
+        previousData = currentData; // Mettre à jour pour la prochaine comparaison
+    }
+}
+
+async function extractFromLapTimes(connection, saison, manche) {
+
+    // Grille de départ
+    const grilleDepart = await getGrilleDepart(connection, saison, manche);
+    grilleDepart.forEach( async pilote => {
+        const insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
+        await connection.execute(insertQuery, [saison, manche, pilote.numero, pilote.position, pilote.position]);
+    });
+
+    // Création des infos générales
+    insertLiveTiming(connection, saison, manche, false, false, false, grilleDepart.length);
+
+    const piloteClassement = {pilote: {}};
+    const tempsTour = await getTempsTour(connection, saison, manche);
+    tempsTour.forEach(async temps => {        
+        const insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, position, temps_tour, tours) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?, temps_tour=?, tours=?`;
+        await connection.execute(insertQuery, [saison, manche, temps.numero, temps.temps_total*1000, temps.position, temps.temps_tour, temps.tour, temps.position, temps.temps_tour, temps.tour]);
+    });
+}
+
 // Fonction principale
 async function main() {
     const connection = await mysql.createConnection(dbConfig);
-
-    const pilotes = await getNumeros(connection, saison, manche);
-
     try {
-        // Lire et traiter tous les fichiers state*.js dans le répertoire
-        //const files = await fs.promises.readdir(directoryPath);
-        const files = await checkAndExtractDirectory(directoryPath);
-        const stateFiles = files.filter(file => file.startsWith('state') && file.endsWith('.js')).sort();
-        const initialTiming = parseInt(stateFiles[0].replace(/state_(\d+)_(\d+)\.js/, (_, num1, num2) => `${num1}${num2}`));        
-
-        let previousData = null;
-        let nbTours = await getNbTours(saison, manche, connection);
-        let data = {
-            toursMax: 0,
-            nbTours: nbTours
-          };
-
-        for (const file of stateFiles) {
-            const filePath = path.join(directoryPath, file);
-            const currentData = await processFile(filePath, pilotes);
-            const nbLignes = Object.keys(currentData.lignes).length;
-            if (nbLignes != pilotes.length) {
-                console.log(`Erreur : il y a ${nbLignes}  dans les fichier de data Live Timing et ${pilotes.length} pilotes trouvés en BDD. Interruption du process`);
-                process.exit();
-            }
-            
-            if (previousData) {
-                await compareAndInsert(connection, currentData, previousData, initialTiming, data);
-            } else {
-                for (ligne of currentData.lignes) {
-                    const numero = ligne.numero;
-                    const position = ligne.position;
-                    const pneus = ligne.pneus.type;
-                    
-                    const insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position, pneus) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?, pneus=?`;
-                    await connection.execute(insertQuery, [saison, manche, numero, position, pneus, position, pneus]);
-                }
-                console.log(`Ecriture des pilotes OK`);
-            }
-            previousData = currentData; // Mettre à jour pour la prochaine comparaison
+        if (saison <= 2006) {
+            await extractFromLapTimes(connection, saison, manche);
         }
+        if (saison >= 2010) {
+            await extractFromTfeed(connection, saison, manche);
+        }        
     } catch (error) {
         console.error('Erreur:', error);
     } finally {
@@ -258,7 +290,7 @@ async function getNbTours(saison, manche, connection) {
         FROM statsf1_classement sc
         LEFT JOIN statsf1_grand_prix sgp ON sgp.id_grand_prix = sc.id_grand_prix
         WHERE saison = ? AND manche = ?
-        AND sc.position_int <= 50
+        AND sc.position_int <= 55
         ORDER BY numero
     `;
 
@@ -270,5 +302,82 @@ async function getNbTours(saison, manche, connection) {
         throw error;
     }
 }
+
+async function getTempsTour(connection, saison, manche) {
+  const query = `
+    SELECT numero, tour, position, temps_total as timing, temps_tour, temps_total
+    FROM tour_par_tour tpt
+    WHERE saison = ? AND manche = ?
+    AND temps_total <> 0
+    order by temps_total
+    limit 0, 30;
+  `;
+  
+  try {
+    const [rows] = await connection.execute(query, [saison, manche]);
+    
+    // Transforme les résultats en JSON
+    const result = rows.map(row => ({
+      numero: row.numero,
+      tour: row.tour,
+      position: row.position,
+      timing: row.timing,
+      temps_tour: row.temps_tour,
+      temps_total: row.temps_total
+    }));
+    
+    return result; // Retourne le tableau d'objets JSON
+  } catch (error) {
+    console.error('Erreur lors de l\'exécution de la requête:', error);
+    throw error;
+  }
+}
+
+async function getGrilleDepart(connection, saison, manche) {
+    try {
+        // Exécution de la requête SQL
+        const [rows] = await connection.execute(`
+            SELECT position, numero, UPPER(sp.nom) AS pilote
+            FROM old_grille og
+            LEFT JOIN statsf1_pilote sp ON sp.nom_url = og.id_pilote_statsf1
+            WHERE saison = ? AND manche = ?
+            ORDER BY position
+        `, [saison, manche]);
+
+        // Retourne les résultats sous forme d'objet JSON
+        const result = rows.map(row => ({
+            position: row.position,
+            numero: row.numero,
+            pilote: row.pilote
+        }));
+
+        return result;
+
+    } catch (error) {
+        console.error('Erreur lors de l\'exécution de la requête :', error);
+    }
+}
+
+async function insertLiveTiming(connection, saison, manche, secteurs, drs, pneus, modele) {
+    try {
+        const insertQuery = `
+            INSERT INTO live_timing (saison, manche, secteurs, drs, pneus, modele)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                secteurs = VALUES(secteurs), 
+                drs = VALUES(drs), 
+                pneus = VALUES(pneus), 
+                modele = VALUES(modele)
+        `;
+
+        // Exécution de la requête avec les paramètres
+        await connection.execute(insertQuery, [saison, manche, secteurs, drs, pneus, modele]);
+
+        console.log(`Données insérées ou mises à jour pour la saison ${saison}, manche ${manche}.`);
+    } catch (error) {
+        console.error('Erreur lors de l\'insertion dans la table live_timing:', error);
+    }
+}
+
 
 main();

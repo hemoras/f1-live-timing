@@ -16,41 +16,41 @@
       </table>
       <table class="classement_tfeed">
       <thead>
-        <tr class="modele_22">
+        <tr :class="'modele_'+modele">
           <th style="text-align: right; padding-right: 15px;" id="sort_column">POS</th>
           <th style="text-align: center;">CAR</th>
           <th style="width: 300px;">DRIVER</th>
-          <th class="pneus">TYRE</th>
+          <th v-if="affichePneus" class="pneus">TYRE</th>
           <th class="tours">LAPS</th>
-          <th class="drs">DRS</th>
+          <th v-if="afficheDrs" class="drs">DRS</th>
           <th class="gap">GAP</th>
           <th class="interval">INT</th>
           <th class="temps_tour">LAP TIME</th>
-          <th class="secteur">S1</th>
-          <th class="secteur">S2</th>
-          <th class="secteur">S3</th>
+          <th class="secteur" v-if="afficheSecteurs">S1</th>
+          <th class="secteur" v-if="afficheSecteurs">S2</th>
+          <th class="secteur" v-if="afficheSecteurs">S3</th>
           <th class="pit">PIT</th>
         </tr>
       </thead>
       <transition-group name="slide" tag="tbody">
-        <tr v-for="(pilot, index) in sortedPilots" :key="pilot.numero" class="ligne modele_22">
+        <tr v-for="(pilot, index) in sortedPilots" :key="pilot.numero" :class="'ligne modele_'+modele">
           <td class="position">{{ pilot.position }}</td>
           <td class="numero">{{ pilot.numero }}</td>
-          <td class="pilote">{{ pilot.nom }}</td>
-          <td class="pneus">
+          <td class="pilote">{{ pilot.nom }}</td>          
+          <td v-if="affichePneus" class="pneus">
                 <div class="pneu_picto" :style="{ color: pilot.pneus.couleur, border: '2px solid ' + pilot.pneus.couleur }">
                     <span class="pneus_type">{{ pilot.pneus.type }}</span>
                 </div>
                 <span class="pneus_tours">{{ pilot.pneus.tours }}</span>
             </td>
           <td class="tours">{{ pilot.tours }}</td>
-          <td class="drs"><div :class="'drs_' + pilot.drs"></div></td>
+          <td v-if="afficheDrs" class="drs"><div :class="'drs_' + pilot.drs"></div></td>
           <td class="gap">{{ pilot.gap }}</td>
           <td class="interval">{{ pilot.interval }}</td>
           <td :class="'temps_tour lap ' +  pilot.tour.couleur">{{ pilot.tour.valeur }}</td>
-          <td :class="'secteur s1 ' +  pilot.s1.couleur">{{ pilot.s1.valeur }}</td>
-          <td :class="'secteur s2 ' +  pilot.s2.couleur">{{ pilot.s2.valeur }}</td>
-          <td :class="'secteur s3 ' +  pilot.s3.couleur">{{ pilot.s3.valeur }}</td>
+          <td v-if="afficheSecteurs" :class="'secteur s1 ' +  pilot.s1.couleur">{{ pilot.s1.valeur }}</td>
+          <td v-if="afficheSecteurs" :class="'secteur s2 ' +  pilot.s2.couleur">{{ pilot.s2.valeur }}</td>
+          <td v-if="afficheSecteurs" :class="'secteur s3 ' +  pilot.s3.couleur">{{ pilot.s3.valeur }}</td>
           <td>{{ pilot.pit }}</td>
         </tr>
       </transition-group>
@@ -61,8 +61,8 @@
         <tr>
             <td style="border-bottom: 0px;">
                 <div id="timer_secondes" style="display: none;"></div>
-                <div id="timer" class="modele_22"></div>
-                <div id="race_status" :class="track_status_css  + ' modele_22'">{{ track_status }}</div>
+                <div id="timer" :class="'modele_'+modele"></div>
+                <div id="race_status" :class="track_status_css">{{ track_status }}</div>
             </td>
         </tr>
       </tbody>
@@ -93,7 +93,11 @@
         track_status: 'TRACK CLEAR',
         track_status_css: 'green_flag',
         last_timing: 0,
-        fileNotFound: false
+        fileNotFound: false,
+        afficheSecteurs: 0,
+        afficheDrs: 0,
+        affichePneus: 0,
+        modele: 22,
       };
     },
     computed: {
@@ -112,6 +116,12 @@
             const responseConfig = await fetch('/config.json');
             try {
               const eventsData = await responseEvents.json();
+
+              // affichage des colonnes
+              this.afficheSecteurs = eventsData.general.secteurs;
+              this.afficheDrs = eventsData.general.drs;
+              this.affichePneus = eventsData.general.pneus;
+              this.modele = eventsData.general.modele;
 
               const configData = await responseConfig.json();
             

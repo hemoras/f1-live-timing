@@ -28,6 +28,7 @@ async function main() {
     const pneusList = await getPneusData(saison, connection);
     const raceStatusList = await getAllRaceStatus(connection);
     const nbTours = await getNbTours(saison, manche, connection);
+    const InfosGenerales = await getInfosGenerales(connection, saison, manche);
     
     try {
         // Requête pour récupérer les lignes correspondant à la saison et la manche, triées par timing
@@ -41,7 +42,7 @@ async function main() {
         let couleurs = { tour: {}, s1:{}, s2: {}, s3: {} };
         let blap = {}; let s1 = {}; let s2 = {}; let s3 = {};
 
-        const general = {"nbTours": nbTours}
+        const general = {"nbTours": nbTours, "secteurs": InfosGenerales.secteurs, "drs": InfosGenerales.drs, "pneus": InfosGenerales.pneus, "modele": InfosGenerales.modele};
         const pilotes = await createInitData(saison, manche, connection);
 
         const events = rows.map(row => {
@@ -257,5 +258,25 @@ async function getNbTours(saison, manche, connection) {
       throw error;
     }
   }
+
+  async function getInfosGenerales(connection, saison, manche) {
+    try {
+        const query = `
+            SELECT *
+            FROM live_timing
+            WHERE saison = ? AND manche = ?
+        `;
+        const [rows] = await connection.execute(query, [saison, manche]);
+        
+        if (rows.length === 0) {
+            console.log(`Aucun enregistrement trouvé pour saison ${saison} et manche ${manche}.`);
+        }
+        
+        return rows[0];
+    } catch (error) {
+        console.error('Erreur lors de la sélection dans live_timing:', error);
+        throw error;
+    }
+}
 
 main();
