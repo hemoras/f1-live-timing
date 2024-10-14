@@ -15,6 +15,7 @@
 
 body {
   background-color: #13151D;
+  margin: 0px;
 }
 
 table.classement_tfeed {
@@ -35,6 +36,7 @@ table.classement_tfeed th {
   text-align: left;
   font-weight: normal;
   font-size: 0.8em;
+  border-bottom: 2px solid #222222;
 }
 
 table.classement_tfeed tr.modele_17 {
@@ -124,7 +126,7 @@ table.classement_tfeed .pneus {
 }
 
 #race_status {
-  margin-top: 10px;
+  margin-top: 20px;
   width: 150px;
   height: 40px;
   line-height: 40px;
@@ -183,6 +185,10 @@ table.classement_tfeed .pneus {
   text-align: center;
   font-size: 1.2em;
   font-family: "Futura Heavy";
+}
+
+table.classement_tfeed .white {
+  color: white;
 }
 
 table.classement_tfeed .green {

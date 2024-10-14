@@ -1,15 +1,12 @@
+<!-- src/App.vue -->
 <template>
   <div id="app">
-    <LiveTiming />
+    <router-view></router-view> <!-- Point de montage des composants de route -->
   </div>
 </template>
 
 <script>
-import LiveTiming from './components/LiveTiming.vue';
-
 export default {
-  components: {
-    LiveTiming,
-  },
+  name: 'App'
 };
 </script>

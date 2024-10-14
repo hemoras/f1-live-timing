@@ -39,5 +39,24 @@ async function checkAndExtractDirectory(directoryPath) {
   }
 }
 
+function formatTime(seconds) {
+  // Extraire les minutes
+  const minutes = Math.floor(seconds / 60);
+
+  // Extraire les secondes
+  const sec = Math.floor(seconds % 60);
+
+  // Extraire les millisecondes et les arrondir à trois chiffres
+  const milliseconds = Math.floor((seconds % 1) * 1000);
+
+  // Formater les valeurs pour toujours avoir 2 chiffres pour les secondes et 3 pour les millisecondes
+  const formattedSeconds = String(sec).padStart(2, '0');
+  const formattedMilliseconds = String(milliseconds).padStart(3, '0');
+
+  // Retourner le temps au format "m:ss.000"
+  return `${minutes}:${formattedSeconds}.${formattedMilliseconds}`;
+}
+
 // Exporte la fonction pour l'utiliser dans d'autres scripts
-module.exports = checkAndExtractDirectory;
+module.exports = { checkAndExtractDirectory, formatTime };
+
