@@ -3,6 +3,7 @@ const path = require('path');
 const mysql = require('mysql2/promise'); // Utiliser mysql2 pour une utilisation avec Promises
 const unzipper = require('unzipper');
 const { checkAndExtractDirectory, formatTime } = require('./utils');
+const { log, clear } = require('console');
 
 // Récupérer les paramètres de la ligne de commande (saison et manche)
 const saison = process.argv[2];
@@ -227,24 +228,169 @@ async function extractFromTfeed(connection, saison, manche) {
     }
 }
 
+async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, timing, nbTours) {
+    // Crée un dictionnaire des oldItems pour les retrouver facilement par numero
+    const oldItemsDict = oldItems.reduce((acc, item) => {
+      acc[item.numero] = item;
+      return acc;
+    }, {});
+  
+    for (const newItem of newItems) {
+      const oldItem = oldItemsDict[newItem.numero];
+  
+      if (oldItem) {
+        const changes = {};
+        
+        // Comparer chaque attribut
+        for (const key of Object.keys(newItem)) {
+          if (newItem[key] !== oldItem[key]) {
+            changes[key] = newItem[key];
+          }          
+        }
+        if (changes.position) {
+            changes.timing = timing;
+        }
+        if (newItem.tours != oldItem.tours && newItem.position == 1) {
+            if (newItem.tours < nbTours) {
+                changes.current_lap = newItem.tours + 1;
+            } else {
+                changes.race_status = 9;
+            }
+        }
+  
+        // Si des différences sont trouvées, les insérer ou mettre à jour dans la table live_timing_event
+        if (Object.keys(changes).length > 0) {
+            
+                const columns = ['numero', ...Object.keys(changes).map(col => `\`${col}\``)].join(',');
+                const values = [newItem.numero, ...Object.values(changes)];
+                const placeholders = values.map(() => '?').join(',');
+        
+                // Créer la clause ON DUPLICATE KEY UPDATE
+                const updates = Object.keys(changes)
+                .map(key => `\`${key}\` = VALUES(\`${key}\`)`)
+                .join(', ');
+        
+                await connection.execute(
+                  `INSERT INTO live_timing_event (saison, manche, ${columns}) VALUES (${saison}, ${manche}, ${placeholders})
+                   ON DUPLICATE KEY UPDATE ${updates}`,
+                  values
+                );
+        }
+      }
+    }
+  }
+
+  function recalculPosition(data) {
+    // Filtrer les données pour ne garder que celles avec un temps de tour défini
+  const filteredData = data;
+
+  const timingDebug = data.find(item => item.numero === 1).timing;
+
+  // Trier les données par tours décroissant, secteursParcourus décroissant, et timing croissant
+  filteredData.sort((a, b) => {
+    if (b.tours !== a.tours) {
+      return b.tours - a.tours; // Tri décroissant par tours
+    }
+    if (b.secteursParcourus !== a.secteursParcourus) {
+      return b.secteursParcourus - a.secteursParcourus; // Tri décroissant par secteursParcourus
+    }
+    if (b.timing !== a.timing) {
+        return a.timing - b.timing; // Tri croissant par timing
+      }
+    return a.grille - b.grille; // Tri croissant par grille
+  });
+
+  // Créer un tableau pour garder les positions uniques
+  const result = [];
+  let lastPosition = null;
+
+  filteredData.forEach((item, index) => {
+      // Sinon, attribuer une nouvelle position unique
+      item.position = index + 1;
+      if (item.tours !=0 || item.secteursParcourus == 0)
+        lastPosition = item.position; // Mettre à jour la dernière position utilisée      
+    result.push(item);
+  });
+clear
+  
+  // Réunir les données traitées avec les données sans temps de tour
+  return [...result];
+  }
+
 async function extractFromLapTimes(connection, saison, manche) {
+
+    const newPiloteClassement = {pilote: {}};
+    const oldPiloteClassement = {pilote: {}};
+    let newSortedClassement = [];
+    let oldSortedClassement = [];
+    let oldItems = [];
+    let newItems = [];
+    const nbTours = await getNbTours(saison, manche, connection);
 
     // Grille de départ
     const grilleDepart = await getGrilleDepart(connection, saison, manche);
-    grilleDepart.forEach( async pilote => {
-        const insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
+    for (const pilote of grilleDepart) {
+        let insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
         await connection.execute(insertQuery, [saison, manche, pilote.numero, pilote.position, pilote.position]);
-    });
+        oldPiloteClassement.pilote[pilote.numero] = {position: pilote.position }
+        newItems[pilote.numero] = {numero: pilote.numero, position: pilote.position, timing: 0, tours: 0, 
+            secteursParcourus: 0, s1:null, s2:null, s3:null, temps_tour:null, grille: pilote.position, gap: '', interval: '' };
+        // Insertion du premier event
+        insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, position) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
+        await connection.execute(insertQuery, [saison, manche, pilote.numero, 0, pilote.position, pilote.position]);
+    };
+    // Initialisation de oldItems et newItems
+    oldItems = JSON.parse(JSON.stringify(newItems)).filter(item => item !== null);
+    newItems = newItems.filter(item => item !== null);
 
     // Création des infos générales
     insertLiveTiming(connection, saison, manche, false, false, false, grilleDepart.length);
 
-    const piloteClassement = {pilote: {}};
+    
     const tempsTour = await getTempsTour(connection, saison, manche);
-    tempsTour.forEach(async temps => {        
-        const insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, position, temps_tour, tours) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?, temps_tour=?, tours=?`;
-        await connection.execute(insertQuery, [saison, manche, temps.numero, temps.temps_total*1000, temps.position, temps.temps_tour, temps.tour, temps.position, temps.temps_tour, temps.tour]);
-    });
+    for (const temps of tempsTour) {
+        // Calcul du secteur
+        let secteursParcourus = 0;
+        if (temps.s1 !== null && temps.s2 === null) {
+            secteursParcourus = 1;
+        }
+        if (temps.s2 !== null && temps.s3 === null) {
+            secteursParcourus = 2;
+        }
+        // Récupération des infos dans newPiloteClassement
+        let itemToUpdate = newItems.find(item => item.numero === temps.numero);
+        itemToUpdate.timing = parseFloat(temps.temps_total) * 1000;
+        itemToUpdate.tours = temps.tour;
+        itemToUpdate.secteursParcourus = secteursParcourus;
+        itemToUpdate.s1 = temps.s1;
+        itemToUpdate.s2 = temps.s2;
+        itemToUpdate.s3 = temps.s3;
+        itemToUpdate.temps_tour = temps.temps_tour;
+        // Si changement de position, on recalcul les positions
+        newItems = recalculPosition(newItems);
+        // Calcul du gap
+        itemToUpdate = newItems.find(item => item.numero === temps.numero);
+        if (itemToUpdate.position != 1) {
+            const itemPremier = newItems.find(item => item.position === 1);
+            const itemPrecedent = newItems.find(item => item.position === itemToUpdate.position - 1);    
+            itemToUpdate.gap = calculEcart(itemToUpdate, itemPremier);
+            itemToUpdate.interval = calculEcart(itemToUpdate, itemPrecedent);
+        }
+        await compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, itemToUpdate.timing, nbTours);
+        // On met à jour oldItems
+        oldItems = JSON.parse(JSON.stringify(newItems)).filter(item => item !== null);
+    }
+    
+}
+
+function calculEcart(itemPilote, itemPiloteReference) {
+    let ecart;
+    if (itemPilote.tours === itemPiloteReference.tours) {
+        ecart = ((itemPilote.timing - itemPiloteReference.timing) / 1000).toFixed(3);
+    } else {
+        ecart = `${itemPiloteReference.tours - itemPilote.tours} LAP`; 
+    }
+    return ecart;
 }
 
 // Fonction principale
@@ -305,12 +451,11 @@ async function getNbTours(saison, manche, connection) {
 
 async function getTempsTour(connection, saison, manche) {
   const query = `
-    SELECT numero, tour, position, temps_total as timing, temps_tour, temps_total
+    SELECT numero, tour, position, temps_total as timing, s1, s2, s3, temps_tour, temps_total
     FROM tour_par_tour tpt
     WHERE saison = ? AND manche = ?
     AND temps_total <> 0
-    order by temps_total
-    limit 0, 30;
+    order by temps_total;
   `;
   
   try {
@@ -322,6 +467,9 @@ async function getTempsTour(connection, saison, manche) {
       tour: row.tour,
       position: row.position,
       timing: row.timing,
+      s1: row.s1,
+      s2: row.s2,
+      s3: row.s3,
       temps_tour: row.temps_tour,
       temps_total: row.temps_total
     }));
@@ -373,11 +521,30 @@ async function insertLiveTiming(connection, saison, manche, secteurs, drs, pneus
         // Exécution de la requête avec les paramètres
         await connection.execute(insertQuery, [saison, manche, secteurs, drs, pneus, modele]);
 
-        console.log(`Données insérées ou mises à jour pour la saison ${saison}, manche ${manche}.`);
     } catch (error) {
         console.error('Erreur lors de l\'insertion dans la table live_timing:', error);
     }
 }
 
+async function triClassement(classement) {
+    let sortedClassement = Object.entries(classement.pilote).sort(([, a], [, b]) => {
+        // Tri par 'tours' décroissant
+        if (b.tours !== a.tours) return b.tours - a.tours;
+        // Si égalité, tri par 'secteursParcourus' décroissant
+        if (b.secteursParcourus !== a.secteursParcourus) return b.secteursParcourus - a.secteursParcourus;
+        // Si encore égalité, tri par 'temps_total' croissant
+        return parseFloat(a.temps_total) - parseFloat(b.temps_total);
+      });
+
+      //return { pilote: Object.fromEntries(sortedClassement) };
+      sortedClassement = sortedClassement.map(([_, value]) => value);
+
+      let position = 1;
+      sortedClassement.forEach(element => {
+        element.position = position++;
+      });
+      
+    return sortedClassement
+}
 
 main();

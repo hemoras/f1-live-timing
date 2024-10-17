@@ -72,7 +72,7 @@ async function main() {
                     }
                     else if (key === 'temps_tour') {
                         let couleur = 'white';
-                        let time = row[key];
+                        let time = parseFloat(row[key]);
                         if (! blap?.best || blap?.best > time) {
                             blap.best = time;
                             blap[event.numero] = time;
