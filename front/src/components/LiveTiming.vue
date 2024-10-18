@@ -171,68 +171,68 @@
         this.events.forEach((event) => {
           setTimeout(() => {
             this.processEvent(event);
-          }, event.timing / 4);
+          }, event.timing / 10);
         });
       },
-      processEvent(event) {
-        if (event.timing === 129920 && event.numero === 6) {
-          console.log('ici');
-        }
-        if (event.type === 'pilote') {
-          const pilot = this.pilots.find((p) => p.numero === event.numero);
-          if (pilot) {
-            if (event.position !== undefined) {
-              pilot.position = event.position;
+      processEvent(events) {
+
+        for (const event of events.event) {
+          if (event.type === 'pilote') {
+            const pilot = this.pilots.find((p) => p.numero === event.numero);
+            if (pilot) {
+              if (event.position !== undefined) {
+                pilot.position = event.position;
+              }
+              if (event.tour) {
+                //if (event.tour.couleur === 'purple') this.replacePurpleWithGreen('lap');
+                if (event.tour.valeur !== undefined) pilot.tour.valeur = event.tour.valeur;
+                if (event.tour.couleur) pilot.tour.couleur = event.tour.couleur;
+              }
+              if (event.s1) {
+                //if (event.s1.couleur === 'purple') this.replacePurpleWithGreen('s1');
+                if (event.s1.valeur !== undefined) pilot.s1.valeur = event.s1.valeur;
+                if (event.s1.couleur) pilot.s1.couleur = event.s1.couleur;
+              }
+              if (event.s2) {
+                //if (event.s1.couleur === 'purple') this.replacePurpleWithGreen('s2');
+                if (event.s2.valeur !== undefined) pilot.s2.valeur = event.s2.valeur;
+                if (event.s2.couleur) pilot.s2.couleur = event.s2.couleur;
+              }
+              if (event.s3) {
+                //if (event.s3.couleur === 'purple') this.replacePurpleWithGreen('s3');
+                if (event.s3.valeur !== undefined) pilot.s3.valeur = event.s3.valeur;
+                if (event.s3.couleur) pilot.s3.couleur = event.s3.couleur;
+              }
+              if (event.tours) {
+                pilot.tours = event.tours;
+              }
+              if (event.pneus) {
+                if (event.pneus.valeur) pilot.pneus.type = event.pneus.valeur;
+                if (event.pneus.couleur) pilot.pneus.couleur = event.pneus.couleur;
+                if (event.pneus.tours) pilot.pneus.tours = event.pneus.tours;
+              }
+              if (event.drs !== undefined) {
+                pilot.drs = event.drs;
+              }
+              if (event.gap !== undefined) {
+                pilot.gap = event.gap;
+              }
+              if (event.interval !== undefined) {
+                pilot.interval = event.interval;
+              }
+              if (event.pit !== undefined) {
+                pilot.pit = event.pit;
+              }
+              if (event.current_lap !== undefined) {
+                this.current_lap = event.current_lap;
+              }
             }
-            if (event.tour) {
-              //if (event.tour.couleur === 'purple') this.replacePurpleWithGreen('lap');
-              if (event.tour.valeur !== undefined) pilot.tour.valeur = event.tour.valeur;
-              if (event.tour.couleur) pilot.tour.couleur = event.tour.couleur;
-            }
-            if (event.s1) {
-              //if (event.s1.couleur === 'purple') this.replacePurpleWithGreen('s1');
-              if (event.s1.valeur !== undefined) pilot.s1.valeur = event.s1.valeur;
-              if (event.s1.couleur) pilot.s1.couleur = event.s1.couleur;
-            }
-            if (event.s2) {
-              //if (event.s1.couleur === 'purple') this.replacePurpleWithGreen('s2');
-              if (event.s2.valeur !== undefined) pilot.s2.valeur = event.s2.valeur;
-              if (event.s2.couleur) pilot.s2.couleur = event.s2.couleur;
-            }
-            if (event.s3) {
-              //if (event.s3.couleur === 'purple') this.replacePurpleWithGreen('s3');
-              if (event.s3.valeur !== undefined) pilot.s3.valeur = event.s3.valeur;
-              if (event.s3.couleur) pilot.s3.couleur = event.s3.couleur;
-            }
-            if (event.tours) {
-              pilot.tours = event.tours;
-            }
-            if (event.pneus) {
-              if (event.pneus.valeur) pilot.pneus.type = event.pneus.valeur;
-              if (event.pneus.couleur) pilot.pneus.couleur = event.pneus.couleur;
-              if (event.pneus.tours) pilot.pneus.tours = event.pneus.tours;
-            }
-            if (event.drs !== undefined) {
-              pilot.drs = event.drs;
-            }
-            if (event.gap !== undefined) {
-              pilot.gap = event.gap;
-            }
-            if (event.interval !== undefined) {
-              pilot.interval = event.interval;
-            }
-            if (event.pit !== undefined) {
-              pilot.pit = event.pit;
-            }
-            if (event.current_lap !== undefined) {
-              this.current_lap = event.current_lap;
-            }
+          } else {
+            if (event.race_status !== undefined) {
+              this.track_status = event.race_status.texte;
+              this.track_status_css = event.race_status.css;
+            }          
           }
-        } else {
-          if (event.race_status !== undefined) {
-            this.track_status = event.race_status.texte;
-            this.track_status_css = event.race_status.css;
-          }          
         }
   
         // Re-trier les pilotes en fonction de leur position

@@ -61,6 +61,8 @@ async function main() {
                         if (row[key] == 1) event.tour = {"valeur": "STOP", "couleur": "red"};
                         if (row[key] == 2) event.tour = {"valeur": "PIT", "couleur": "red"};
                         if (row[key] == 3) event.tour = {"valeur": "OUT", "couleur": "red"};
+                        if (row[key] == 9) event.tour = {"valeur": "RETIRED", "couleur": "red"};
+                        if (row[key] == 1 || row[key] == 9) {event.interval = ''; event.gap = '';}
                     }
                     else if (key === 'race_status') {
                         const result = raceStatusList.find(item => item.id_status === row[key]);
@@ -165,7 +167,30 @@ async function main() {
 
         let mergedEvents = events.concat(newEvents.events).sort((a, b) => a.timing - b.timing);
 
-        const result = { general, pilotes, events: mergedEvents };
+        const groupedEvents = mergedEvents.reduce((acc, event) => {
+            // Trouver un groupe avec le même timing
+            const existingGroup = acc.find(e => e.timing === event.timing);
+          
+            if (existingGroup) {
+              // Ajouter l'événement au groupe existant
+              existingGroup.event.push(event);
+            } else {
+              // Créer un nouveau groupe avec cet événement
+              acc.push({
+                timing: event.timing,
+                event: [event]
+              });
+            }
+          
+            return acc;
+          }, []);
+          groupedEvents.forEach(group => {
+            group.event.forEach(e => {
+              delete e.timing;
+            });
+          });
+
+        const result = { general, pilotes, events: groupedEvents };
         const filePath = path.join(__dirname, '..\\front\\public\\data', `${saison}_${manche}.json`);
         
         // Écriture du fichier JSON
