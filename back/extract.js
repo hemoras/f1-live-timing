@@ -280,6 +280,63 @@ async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connectio
     }
   }
 
+async function insertPitstopEvents(saison, manche, connection) {
+    const pitstops = await getPitstops(saison, manche, connection);
+    const [result] = await connection.execute(`select * from live_timing where saison=? and manche=?`,[saison, manche]);
+    ligneArrivee = result[0].arrivee;
+
+    const NbPitstops = [];
+
+    for (const pitstop of pitstops) {
+        let entreePit;
+        let sortiePit;
+        pitstop.temps_total = parseFloat(pitstop.temps_total);
+        pitstop.tour_precedent = parseFloat(pitstop.tour_precedent);
+        pitstop.tour = parseFloat(pitstop.tour);
+        pitstop.tour_suivant = parseFloat(pitstop.tour_suivant);
+        if (ligneArrivee === 'avant') {
+            entreePit = pitstop.temps_total * 1000;
+            if (pitstop.duree) {
+                sortiePit = (pitstop.temps_total + pitstop.duree) * 1000;
+            } else {
+                sortiePit = (pitstop.temps_total + (pitstop.tour_suivant ? Math.max(pitstop.tour_suivant - pitstop.tour, 20):20)) * 1000;
+            }
+        }
+        if (ligneArrivee === 'après') {
+            sortiePit = pitstop.temps_total * 1000;
+            if (pitstop.duree) {
+                entreePit = (pitstop.temps_total - pitstop.duree) * 1000;
+            } else {
+                sortiePit = (pitstop.temps_total - max(pitstop.tour - pitstop.tour_precedent), 20) * 1000;
+            }
+        }        
+        if (NbPitstops[pitstop.numero]) {
+            NbPitstops[pitstop.numero]++;
+        } else {
+            NbPitstops[pitstop.numero] = 1;
+        }
+
+        // Insertion de l'entrée des stands
+        let insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, pit, abandon) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?, abandon=?`;
+        await connection.execute(insertQuery, [saison, manche, pitstop.numero, entreePit, NbPitstops[pitstop.numero], 2, entreePit, 2]);
+
+        // Insertion de la sortie des stands
+        insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, abandon) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?, abandon=?`;
+        await connection.execute(insertQuery, [saison, manche, pitstop.numero, sortiePit, pitstop.abandon? 9:3, sortiePit, pitstop.abandon? 9:3]);
+    }
+}
+
+async function insertAbandonEvents(saison, manche, connection) {
+    const abandons = await getAbandons(saison, manche, connection);
+    for (const abandon of abandons) {
+        const timing = (parseFloat(abandon.temps_total) + parseFloat(abandon.meilleur_temps_tour) + 10) * 1000;
+        // Insertion de l'abandon des stands
+        let insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, abandon) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?`;
+        await connection.execute(insertQuery, [saison, manche, abandon.numero, timing, 1, timing]);
+
+    }
+}
+
   function recalculPosition(data) {
     // Filtrer les données pour ne garder que celles avec un temps de tour défini
   const filteredData = data;
@@ -398,6 +455,9 @@ async function main() {
     const connection = await mysql.createConnection(dbConfig);
     try {
         if (saison <= 2006) {
+            await insertAbandonEvents(saison, manche, connection);
+            return;
+            await insertPitstopEvents(saison, manche, connection);
             await extractFromLapTimes(connection, saison, manche);
         }
         if (saison >= 2010) {
@@ -505,6 +565,53 @@ async function getGrilleDepart(connection, saison, manche) {
         console.error('Erreur lors de l\'exécution de la requête :', error);
     }
 }
+
+const getPitstops = async (saison, manche, connection) => {
+    try {
+        // Exécute la requête pour récupérer les résultats
+        const [rows] = await connection.execute(
+            `SELECT tour.temps_total, p.numero , p.tour, p.abandon, p.duree, precedent.temps_tour as tour_precedent, tour.temps_tour as tour, suivant.temps_tour as tour_suivant
+            from pitstop p 
+            left join tour_par_tour tour on tour.saison = p.saison and tour.manche = p.manche and tour.numero = p.numero and tour.tour = p.tour
+            left join tour_par_tour precedent on precedent.saison = p.saison and precedent.manche = p.manche and precedent.numero = p.numero and precedent.tour = p.tour - 1
+            left join tour_par_tour suivant on suivant.saison = p.saison and suivant.manche = p.manche and suivant.numero = p.numero and suivant.tour = p.tour + 1
+            WHERE p.saison = ? AND p.manche = ?`,
+            [saison, manche]
+        );
+
+        // Retourne les résultats sous forme de JSON
+        return rows;
+    } catch (error) {
+        console.error('Erreur lors de la récupération des résultats de pitstop:', error);
+        throw error;
+    }
+};
+
+const getAbandons = async (saison, manche, connection) => {
+    try {
+        // Exécute la requête pour récupérer les résultats
+        const [rows] = await connection.execute(
+            `select sc.numero, tpt.temps_total, min(mt.temps_tour) as meilleur_temps_tour
+            from statsf1_classement sc
+            left join statsf1_grand_prix sgp on sgp.id_grand_prix = sc.id_grand_prix
+            left join tour_par_tour tpt on tpt.saison = sgp.saison and tpt.manche = sgp.manche and tpt.numero = sc.numero and tpt.tour = sc.tours 
+            left join tour_par_tour mt on mt.saison = sgp.saison and mt.manche = sgp.manche and mt.tour = sc.tours
+            left join pitstop p on p.saison = sgp.saison and p.manche = sgp.manche and p.numero = sc.numero and p.abandon = 1
+            where sgp.saison = ? and sgp.manche = ?
+            and sc.abandon is not null
+            and p.numero is null
+            group by sc.numero, tpt.temps_total`,
+            [saison, manche]
+        );
+
+        // Retourne les résultats sous forme de JSON
+        return rows;
+    } catch (error) {
+        console.error('Erreur lors de la récupération des résultats de pitstop:', error);
+        throw error;
+    }
+};
+
 
 async function insertLiveTiming(connection, saison, manche, secteurs, drs, pneus, modele) {
     try {
