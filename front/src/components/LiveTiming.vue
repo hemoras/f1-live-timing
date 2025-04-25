@@ -4,10 +4,10 @@
     <!-- Vous pouvez également afficher un composant personnalisé ici -->
     <!-- <ErrorComponent /> -->
   </div>
-  <div v-else>
+  <div v-else>      
       <table class="classement_tfeed">
         <tbody>
-        <tr style="border-bottom: 0px;">
+        <tr style="border-bottom: 0px;" class="no-background">
           <td colspan="13" style="border-bottom: 0px;">
               <div id="lap_info">LAP <span id="current_lap">{{  current_lap  }}</span> / {{ total_laps }}</div>
           </td>
@@ -56,9 +56,19 @@
       </transition-group>
     </table>
 
+    <table class="classement_tfeed">
+        <tbody>
+        <tr style="border-bottom: 0px;" class="no-background">
+            <td v-if="best_lap_time !== ''" colspan="13" style="border-bottom: 0px;">
+              Best lap : {{ best_lap_time }} ({{ best_lap_pilote }}) at lap {{ best_lap_lap }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
     <table class="classement_tfeed" >
       <tbody>
-        <tr>
+        <tr class="no-background">
             <td style="border-bottom: 0px;">
                 <div id="timer_secondes" style="display: none;"></div>
                 <div id="timer" :class="'modele_'+modele"></div>
@@ -67,7 +77,7 @@
         </tr>
       </tbody>
     </table>
-    <div style="text-align: center; color: white">LAST TIMING : {{  last_timing }}</div>
+    <div v-if="debug" style="text-align: center; color: white">LAST TIMING : {{  last_timing }}</div>
   </div>
   </template>
   
@@ -90,14 +100,20 @@
         colors: {},
         current_lap: 1,
         total_laps: 99,
-        track_status: 'TRACK CLEAR',
-        track_status_css: 'green_flag',
+        track_status: '',
+        track_status_css: '',
         last_timing: 0,
         fileNotFound: false,
         afficheSecteurs: 0,
         afficheDrs: 0,
         affichePneus: 0,
         modele: 22,
+        vitesse: 1,
+        debug: 0,
+        best_lap_time: '',
+        best_lap_pilote: '',
+        best_lap_lap: '',
+        eventsData: {}
       };
     },
     computed: {
@@ -106,6 +122,12 @@
       },
     },
     async mounted() {
+      const vitesseParam = this.$route.query.vitesse;
+      if (vitesseParam) {
+        this.vitesse = parseInt(vitesseParam, 10); // Convertir en entier
+      }
+      const debug = this.$route.query.debug;
+      if (debug) {this.debug = debug;}
       await this.loadData();
       this.startEventProcessing();
     },
@@ -116,6 +138,7 @@
             const responseConfig = await fetch('/config.json');
             try {
               const eventsData = await responseEvents.json();
+              this.eventsData = eventsData;
 
               // affichage des colonnes
               this.afficheSecteurs = eventsData.general.secteurs;
@@ -160,7 +183,7 @@
             this.events = eventsData.events;
 
             this.total_laps = eventsData.general.nbTours;
-
+            
             // Démarrer le traitement des événements
             this.startEventProcessing();
             } catch {
@@ -171,7 +194,7 @@
         this.events.forEach((event) => {
           setTimeout(() => {
             this.processEvent(event);
-          }, event.timing / 10);
+          }, event.timing / this.vitesse);
         });
       },
       processEvent(events) {
@@ -227,9 +250,18 @@
                 this.current_lap = event.current_lap;
               }
             }
+          } else if (event.type === 'bestlap') {
+            this.best_lap_time = event.temps;
+            this.best_lap_pilote = this.eventsData.pilotes.find(p => p.numero === event.numero).nom;  
+            this.best_lap_lap = event.tour;
+            console.log("bestlap avec best_lap_time=", this.best_lap_time, "best_lap_pilote=", this.best_lap_pilote, "best_lap_lap=", this.best_lap_lap);
           } else {
             if (event.race_status !== undefined) {
-              this.track_status = event.race_status.texte;
+              if (event.race_status.css == 'decompte') {
+                this.startCountdown(event.race_status.texte, this.vitesse);
+              } else {
+                this.track_status = event.race_status.texte;
+              }              
               this.track_status_css = event.race_status.css;
             }          
           }
@@ -238,7 +270,7 @@
         // Re-trier les pilotes en fonction de leur position
         this.pilots.sort((a, b) => a.position - b.position);
 
-        this.last_timing = event.timing;
+        this.last_timing = events.timing;
       },
       replacePurpleWithGreen(colonne) {
         // Sélectionne tous les <td> qui ont à la fois les classes "s1" et "purple"
@@ -249,8 +281,38 @@
             td.classList.remove('purple'); // Retire la classe "purple"
             td.classList.add('green');     // Ajoute la classe "green"
         });
-      }
-    },
+      },
+      startCountdown(seconds, speedMultiplier = 1) {
+        let remainingTime = seconds;
+
+        const countdownInterval = setInterval(() => {
+            // Calculer les minutes et secondes restantes
+            const minutes = Math.floor(remainingTime / 60);
+            const secs = remainingTime % 60;
+
+            // Formater pour afficher toujours 2 chiffres
+            const formattedMinutes = minutes.toString().padStart(2, '0');
+            const formattedSeconds = secs.toString().padStart(2, '0');
+            
+            // Mettre à jour la propriété track_status
+            if (this.track_status_css === 'decompte') {
+                this.track_status = `${formattedMinutes}:${formattedSeconds}`;
+            }
+
+            // Décrémenter le temps restant
+            remainingTime--;
+
+            // Arrêter le décompte à 00:00
+            if (remainingTime < 0) {
+                clearInterval(countdownInterval);
+                if (this.track_status_css === 'decompte') {
+                    this.track_status = "00:00";
+                }
+            }
+        }, 1000 / speedMultiplier); // Ajuster l'intervalle en fonction du multiplicateur
+    }
+      
+    },    
   };
   </script>
   

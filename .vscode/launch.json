@@ -1,13 +1,22 @@
 {
     "version": "0.2.0",
     "configurations": [
+      {
+        "type": "node",
+        "request": "launch",
+        "name": "node genere-json.js",
+        "program": "${workspaceFolder}/back/genere-json.js",
+        "args": ["1981", "3"],
+        "console": "integratedTerminal",
+        "skipFiles": ["<node_internals>/**"]
+      },
 
       {
         "type": "node",
         "request": "launch",
         "name": "Lancer extract.js",
         "program": "${workspaceFolder}/back/extract.js",
-        "args": ["1981", "3"],
+        "args": ["1981", "7"],
         "console": "integratedTerminal",
         "skipFiles": ["<node_internals>/**"]
       }

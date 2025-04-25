@@ -6,6 +6,11 @@ const { checkAndExtractDirectory, formatTime } = require('./utils');
 // Récupérer les paramètres de la ligne de commande (saison et manche)
 const saison = process.argv[2];
 const manche = process.argv[3];
+const startIndex = parseInt(process.argv.indexOf('-start'));
+let start = 0;
+if (startIndex !== -1 && process.argv[startIndex + 1]) {
+    start = parseInt(process.argv[startIndex + 1], 10); // Convertir en entier
+}
 
 if (!saison || !manche) {
     console.error('Erreur : vous devez fournir la saison et la manche en paramètres.');
@@ -29,6 +34,26 @@ async function main() {
     const raceStatusList = await getAllRaceStatus(connection);
     const nbTours = await getNbTours(saison, manche, connection);
     const InfosGenerales = await getInfosGenerales(connection, saison, manche);
+
+    let dureePreCourse = 0; let dureePreCourseMillis = 0;
+    let startEvents = { events: [] };
+    // StartIndex contient le nombre de minutes d'avant course : si duree_tdf est renseigné, 
+    // c'est le nombre de minutes avant le TDF, sinon, le nombre de minutes avant le départ réel
+    if (start) {        
+        if (InfosGenerales.duree_tdf) {
+            dureePreCourse = (parseFloat(InfosGenerales.duree_tdf) + start * 60);
+            startEvents = {events: [
+                {timing:0, type: "general", race_status:{texte:start*60, css:"decompte"}},
+                {timing:start * 60 * 1000, type: "general", race_status:{texte:"FORMATION LAP", css:"formation_lap"}},
+            ]};
+        } else {
+            dureePreCourse = (start * 60);
+            startEvents = {events: [
+                {timing:0, event:[{type: "general", race_status:{texte:start*60, css:"decompte"}}]},
+            ]}
+        }
+    }
+    dureePreCourseMillis = dureePreCourse * 1000;
     
     try {
         // Requête pour récupérer les lignes correspondant à la saison et la manche, triées par timing
@@ -46,6 +71,7 @@ async function main() {
         const pilotes = await createInitData(saison, manche, connection);
 
         const events = rows.map(row => {
+            row.timing = parseInt(row.timing) + dureePreCourseMillis;
             const event = { timing: row.timing };
             if (row.numero !== null) {
                 event.type = 'pilote';
@@ -62,7 +88,7 @@ async function main() {
                         if (row[key] == 2) event.tour = {"valeur": "PIT", "couleur": "red"};
                         if (row[key] == 3) event.tour = {"valeur": "OUT", "couleur": "red"};
                         if (row[key] == 9) event.tour = {"valeur": "RETIRED", "couleur": "red"};
-                        if (row[key] == 1 || row[key] == 9) {event.interval = ''; event.gap = '';}
+                        if (row[key] == 1 || row[key] == 9) {event.interval = ''; event.gap = ''; event.pit = '';}
                     }
                     else if (key === 'race_status') {
                         const result = raceStatusList.find(item => item.id_status === row[key]);
@@ -83,6 +109,7 @@ async function main() {
                             if (purpleTrouve) {
                                 newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": parseInt(purpleTrouve), "tour": {"couleur": "green"}});
                                 couleurs.tour[parseInt(purpleTrouve)] = 'green';
+                                newEvents.events.push({"timing":row.timing, "type": "bestlap", "temps": formatTime(time), "numero": row.numero, "tour": row.tours});
                             }    
                         } else if (!blap[event.numero] || blap[event.numero] > time) {
                             blap[event.numero] = time;
@@ -153,8 +180,11 @@ async function main() {
                     } else if (key === 'pneus_tours') {
                         if (event.pneus === undefined) event.pneus = {};
                         event.pneus.tours = row[key];
-                    }
-                    else
+                    } else if (key === 'position' && row[key] === 1) {
+                        event.position = 1;
+                        event.gap = '';
+                        event.interval = '';
+                    } else
                         event[key] = row[key];
                 }
             });
@@ -163,9 +193,11 @@ async function main() {
         });
 
         //console.log(newEvents);
+        //console.log('-----------');
+        //console.log(startEvents);
         //console.log(couleurs.s1);
 
-        let mergedEvents = events.concat(newEvents.events).sort((a, b) => a.timing - b.timing);
+        let mergedEvents = events.concat(startEvents.events).concat(newEvents.events).sort((a, b) => a.timing - b.timing);
 
         const groupedEvents = mergedEvents.reduce((acc, event) => {
             // Trouver un groupe avec le même timing
@@ -207,7 +239,7 @@ async function main() {
 
 async function createInitData(saison, manche, connection) {
     const [rows] = await connection.execute(
-        `SELECT lti.\`position\`, lti.numero, upper(sp.nom) as pilote, ltpc.affichage as pneu, ltpc.couleur 
+        `SELECT lti.\`position\`, lti.numero, upper(sp.nom) as pilote, upper(sp.prenom) as prenom, ltpc.affichage as pneu, ltpc.couleur 
         from live_timing_init lti
         left join live_timing_pneus ltp on ltp.id_pneu = lti.pneus
         left join live_timing_pneus_couleur ltpc on ltpc.\`type\` = ltp.\`type\` and ltpc.saison = lti.saison 
@@ -218,6 +250,16 @@ async function createInitData(saison, manche, connection) {
         order by lti.\`position\``, 
         [saison, manche]
     );
+
+    // Ajout de l'initiale du prénom si homonymes
+    for (const row of rows) {
+        if (row.pilote == 'SCHUMACHER' && saison >= 1997 && saison <= 2006) {
+            row.pilote = row.prenom[0] + ' ' + row.pilote;
+        }
+        if (row.pilote == 'SUZUKI' && saison == 1993 && manche >= 15) {
+            row.pilote = row.prenom[0] + ' ' + row.pilote;
+        }
+    }
 
     // Transformation des résultats en objet JSON
     const pilotes = rows.map(row => ({

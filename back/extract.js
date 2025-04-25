@@ -291,6 +291,7 @@ async function insertPitstopEvents(saison, manche, connection) {
         let entreePit;
         let sortiePit;
         pitstop.temps_total = parseFloat(pitstop.temps_total);
+        pitstop.temps_total_precedent = parseFloat(pitstop.temps_total_precedent);
         pitstop.tour_precedent = parseFloat(pitstop.tour_precedent);
         pitstop.tour = parseFloat(pitstop.tour);
         pitstop.tour_suivant = parseFloat(pitstop.tour_suivant);
@@ -303,12 +304,25 @@ async function insertPitstopEvents(saison, manche, connection) {
             }
         }
         if (ligneArrivee === 'après') {
-            sortiePit = pitstop.temps_total * 1000;
-            if (pitstop.duree) {
-                entreePit = (pitstop.temps_total - pitstop.duree) * 1000;
+            // Si on a pas de temps total pour ce tour, c'est que le pilote s'est arrêté pour abandonné. 
+            // On prend le temps total du tour précédent et on lui ajoute le tour précédent + 20 secondes
+            if (Number.isNaN(pitstop.temps_total)) {
+                sortiePit = (pitstop.temps_total_precedent + pitstop.tour_precedent + 20) * 1000;
+                entreePit = (pitstop.temps_total_precedent + pitstop.tour_precedent) * 1000;
+                pitstop.abandon = 1;
             } else {
-                sortiePit = (pitstop.temps_total - max(pitstop.tour - pitstop.tour_precedent), 20) * 1000;
-            }
+                sortiePit = pitstop.temps_total * 1000;
+
+                if (pitstop.duree) {
+                    entreePit = (pitstop.temps_total - pitstop.duree) * 1000;
+                } else {
+                    if (Number.isNaN(pitstop.tour_precedent)) {
+                        entreePit = sortiePit - 20 * 1000;
+                    } else {
+                        entreePit = (pitstop.temps_total - Math.max(pitstop.tour - pitstop.tour_precedent, 20)) * 1000;
+                    }                    
+                }
+            }                        
         }        
         if (NbPitstops[pitstop.numero]) {
             NbPitstops[pitstop.numero]++;
@@ -376,10 +390,6 @@ clear
 
 async function extractFromLapTimes(connection, saison, manche) {
 
-    const newPiloteClassement = {pilote: {}};
-    const oldPiloteClassement = {pilote: {}};
-    let newSortedClassement = [];
-    let oldSortedClassement = [];
     let oldItems = [];
     let newItems = [];
     const nbTours = await getNbTours(saison, manche, connection);
@@ -389,13 +399,15 @@ async function extractFromLapTimes(connection, saison, manche) {
     for (const pilote of grilleDepart) {
         let insertQuery = `INSERT INTO live_timing_init (saison, manche, numero, position) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
         await connection.execute(insertQuery, [saison, manche, pilote.numero, pilote.position, pilote.position]);
-        oldPiloteClassement.pilote[pilote.numero] = {position: pilote.position }
         newItems[pilote.numero] = {numero: pilote.numero, position: pilote.position, timing: 0, tours: 0, 
             secteursParcourus: 0, s1:null, s2:null, s3:null, temps_tour:null, grille: pilote.position, gap: '', interval: '' };
         // Insertion du premier event
         insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, position) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE position=?`;
         await connection.execute(insertQuery, [saison, manche, pilote.numero, 0, pilote.position, pilote.position]);
     };
+    // Départ de la course
+    insertQuery = `INSERT INTO live_timing_event (saison, manche, timing, race_status) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE race_status = ?`;
+    await connection.execute(insertQuery, [saison, manche, 0, 1, 1]);
     // Initialisation de oldItems et newItems
     oldItems = JSON.parse(JSON.stringify(newItems)).filter(item => item !== null);
     newItems = newItems.filter(item => item !== null);
@@ -455,10 +467,9 @@ async function main() {
     const connection = await mysql.createConnection(dbConfig);
     try {
         if (saison <= 2006) {
-            await insertAbandonEvents(saison, manche, connection);
-            return;
-            await insertPitstopEvents(saison, manche, connection);
             await extractFromLapTimes(connection, saison, manche);
+            await insertAbandonEvents(saison, manche, connection);
+            await insertPitstopEvents(saison, manche, connection);
         }
         if (saison >= 2010) {
             await extractFromTfeed(connection, saison, manche);
@@ -570,7 +581,7 @@ const getPitstops = async (saison, manche, connection) => {
     try {
         // Exécute la requête pour récupérer les résultats
         const [rows] = await connection.execute(
-            `SELECT tour.temps_total, p.numero , p.tour, p.abandon, p.duree, precedent.temps_tour as tour_precedent, tour.temps_tour as tour, suivant.temps_tour as tour_suivant
+            `SELECT tour.temps_total, p.numero , p.tour, p.abandon, p.duree, precedent.temps_tour as tour_precedent, tour.temps_tour as tour, suivant.temps_tour as tour_suivant, precedent.temps_total as temps_total_precedent
             from pitstop p 
             left join tour_par_tour tour on tour.saison = p.saison and tour.manche = p.manche and tour.numero = p.numero and tour.tour = p.tour
             left join tour_par_tour precedent on precedent.saison = p.saison and precedent.manche = p.manche and precedent.numero = p.numero and precedent.tour = p.tour - 1
@@ -591,14 +602,15 @@ const getAbandons = async (saison, manche, connection) => {
     try {
         // Exécute la requête pour récupérer les résultats
         const [rows] = await connection.execute(
-            `select sc.numero, tpt.temps_total, min(mt.temps_tour) as meilleur_temps_tour
+            `select sc.numero, ifnull(tpt.temps_total, 0) as temps_total, min(mt.temps_tour) as meilleur_temps_tour
             from statsf1_classement sc
             left join statsf1_grand_prix sgp on sgp.id_grand_prix = sc.id_grand_prix
             left join tour_par_tour tpt on tpt.saison = sgp.saison and tpt.manche = sgp.manche and tpt.numero = sc.numero and tpt.tour = sc.tours 
-            left join tour_par_tour mt on mt.saison = sgp.saison and mt.manche = sgp.manche and mt.tour = sc.tours
+            left join tour_par_tour mt on mt.saison = sgp.saison and mt.manche = sgp.manche and mt.tour = sc.tours + 1
             left join pitstop p on p.saison = sgp.saison and p.manche = sgp.manche and p.numero = sc.numero and p.abandon = 1
             where sgp.saison = ? and sgp.manche = ?
             and sc.abandon is not null
+            and sc.position_int <= 55
             and p.numero is null
             group by sc.numero, tpt.temps_total`,
             [saison, manche]
@@ -612,21 +624,46 @@ const getAbandons = async (saison, manche, connection) => {
     }
 };
 
+async function getInfosGp(saison, manche, connection) {
+    try {
+      const query = 'SELECT sgp.ligne_arrivee, sgp.duree_tdf FROM statsf1_grand_prix sgp WHERE saison = ? AND manche = ?';
+      
+      // Utilisation de la connexion pour exécuter la requête
+      const [rows] = await connection.execute(query, [saison, manche]);
+      
+      // Vérification et retour du résultat
+      if (rows.length > 0) {
+        return rows[0]; // Retourne la valeur unique
+      } else {
+        return null; // Pas de résultat trouvé
+      }
+    } catch (error) {
+      console.error('Erreur lors de la récupération de ligne_arrivee:', error);
+      throw error;
+    }
+  }
+  
 
 async function insertLiveTiming(connection, saison, manche, secteurs, drs, pneus, modele) {
     try {
+        const infosGp = await getInfosGp(saison, manche, connection);
+        const arrivee = infosGp.ligne_arrivee;
+        const duree_tdf = infosGp.duree_tdf;
+
         const insertQuery = `
-            INSERT INTO live_timing (saison, manche, secteurs, drs, pneus, modele)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO live_timing (saison, manche, secteurs, drs, pneus, modele, arrivee, duree_tdf)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE 
                 secteurs = VALUES(secteurs), 
                 drs = VALUES(drs), 
                 pneus = VALUES(pneus), 
-                modele = VALUES(modele)
+                modele = VALUES(modele), 
+                arrivee = VALUES(arrivee),
+                duree_tdf = VALUES(duree_tdf)
         `;
 
         // Exécution de la requête avec les paramètres
-        await connection.execute(insertQuery, [saison, manche, secteurs, drs, pneus, modele]);
+        await connection.execute(insertQuery, [saison, manche, secteurs, drs, pneus, modele, arrivee, duree_tdf]);
 
     } catch (error) {
         console.error('Erreur lors de l\'insertion dans la table live_timing:', error);
