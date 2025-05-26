@@ -53,7 +53,7 @@ async function main() {
             ]}
         }
     }
-    dureePreCourseMillis = dureePreCourse * 1000;
+    dureePreCourseMillis = dureePreCourse * 1000;    
     
     try {
         // Requête pour récupérer les lignes correspondant à la saison et la manche, triées par timing
@@ -67,11 +67,47 @@ async function main() {
         let couleurs = { tour: {}, s1:{}, s2: {}, s3: {} };
         let blap = {}; let s1 = {}; let s2 = {}; let s3 = {};
 
-        const general = {"nbTours": nbTours, "secteurs": InfosGenerales.secteurs, "drs": InfosGenerales.drs, "pneus": InfosGenerales.pneus, "modele": InfosGenerales.modele};
+        const general = {"nbTours": nbTours, "nom_gp": saison + ' ' + InfosGenerales.nom_gp, "secteurs": InfosGenerales.secteurs, "drs": InfosGenerales.drs, "pneus": InfosGenerales.pneus, "modele": InfosGenerales.modele};
         const pilotes = await createInitData(saison, manche, connection);
 
-        const events = rows.map(row => {
-            row.timing = parseInt(row.timing) + dureePreCourseMillis;
+        let dureeEntreDeuxDeparts = 0; // Renseigné uniquement si les tours du premier départ s'ont pas été comptabilisés
+        let classementPartie1 = null;
+        // Affichage du drapeau rouge
+        if (InfosGenerales.drapeau_rouge) {
+            newEvents.events.push({
+                timing: dureePreCourseMillis + InfosGenerales.drapeau_rouge * 1000,
+                type: "general",
+                race_status: {
+                    texte: "RED FLAG",
+                    css: "red_flag"
+                }
+            });
+            if (InfosGenerales.tours_p1) {
+                classementPartie1 = await getClassementCoursePartie1(saison, manche, InfosGenerales.tours_p1, InfosGenerales.timing_depart2, connection);
+            }
+            dureeEntreDeuxDeparts = InfosGenerales.timing_depart2 * 1000;
+            newEvents.events.push({
+                timing: dureePreCourseMillis + InfosGenerales.timing_depart2 * 1000,
+                type: "general",
+                race_status: {
+                    texte: "TRACK CLEAR",
+                    css: "green_flag"
+                }
+            });
+        }
+
+
+        const events = rows.map(row => {            
+            if (row.timing === 0) {
+                row.timing = parseInt(row.timing) + dureePreCourseMillis;
+            } else if (classementPartie1 && classementPartie1.find(p => p.numero === row.numero) && row.timing > classementPartie1.find(p => p.numero === row.numero).temps_total) {
+                row.timing = parseInt(row.timing) + dureePreCourseMillis + dureeEntreDeuxDeparts - classementPartie1.find(p => p.numero === row.numero).temps_total;
+            }
+            else if (classementPartie1) {
+                row.timing = parseInt(row.timing) + dureePreCourseMillis;
+            } else {
+                row.timing = parseInt(row.timing) + dureePreCourseMillis + dureeEntreDeuxDeparts;
+            }
             const event = { timing: row.timing };
             if (row.numero !== null) {
                 event.type = 'pilote';
@@ -79,6 +115,7 @@ async function main() {
             } else {
                 event.type = 'general';
             }
+
 
             // Ajout de chaque champ non nul
             Object.keys(row).forEach(key => {
@@ -105,16 +142,26 @@ async function main() {
                             blap.best = time;
                             blap[event.numero] = time;
                             couleur = 'purple';
+                            // Si il y a un autre pilote en purple, on le repasse en vert
                             const purpleTrouve = Object.entries(couleurs.tour).find(([key, value]) => value === 'purple')?.[0];
-                            if (purpleTrouve) {
+                            if (purpleTrouve) {                                
                                 newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": parseInt(purpleTrouve), "tour": {"couleur": "green"}});
-                                couleurs.tour[parseInt(purpleTrouve)] = 'green';
-                                newEvents.events.push({"timing":row.timing, "type": "bestlap", "temps": formatTime(time), "numero": row.numero, "tour": row.tours});
+                                couleurs.tour[parseInt(purpleTrouve)] = 'green';                                
                             }    
+                            // On met à jour le temps du meilleur tour global
+                            if (row.tours > 1)
+                                newEvents.events.push({"timing":row.timing, "type": "best_lap", "temps": formatTime(time), "numero": row.numero, "tour": row.tours});
+                            // On met à jour le meilleur tour du pilote en cours
+                            if (row.tours > 1)
+                                newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": row.numero, "best_lap": formatTime(time)});
                         } else if (!blap[event.numero] || blap[event.numero] > time) {
                             blap[event.numero] = time;
                             couleur = 'green';
+                            // On met à jour le meilleur tour du pilote en cours
+                            if (row.tours > 1)
+                                newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": row.numero, "best_lap": formatTime(time)});
                         }
+                        if (row.tours == 1) couleur = 'white';
                         event.tour = {"valeur": formatTime(row[key]), "couleur": couleur};
                         couleurs.tour[event.numero] = couleur; // Pour savoir qui est actuellement en purple
                     } else if (key === 's1') {
@@ -304,6 +351,24 @@ async function getPneusData(saison, connection) {
     }));
 
     return { pneus: result };
+}
+
+async function getClassementCoursePartie1(saison, manche, tour, timing_depart2, connection) {
+    const [rows] = await connection.execute(`
+        select numero, if(max(tours)<6,${timing_depart2},sum(temps_tour)) as temps_total
+        from live_timing_event
+        where saison = ? and manche = ?
+        and tours <= ?
+        group by numero;
+    `, [saison, manche, tour]);
+
+    // Formater les résultats sous forme d'objet JSON
+    const result = rows.map(row => ({
+        numero: row.numero,
+        temps_total: row.temps_total * 1000
+    }));
+
+    return result;
 }
 
 async function getNbTours(saison, manche, connection) {
