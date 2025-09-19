@@ -4,7 +4,10 @@
     <!-- Vous pouvez également afficher un composant personnalisé ici -->
     <!-- <ErrorComponent /> -->
   </div>
-  <div v-else>      
+  <div v-else>
+    <div class="container-gauche">
+      <div class="nom_gp">{{  nom_gp }}<hr>Round {{  manche }}</div>
+    </div>    
       <table class="classement_tfeed">
         <tbody>
         <tr style="border-bottom: 0px;" class="no-background">
@@ -26,6 +29,7 @@
           <th class="gap">GAP</th>
           <th class="interval">INT</th>
           <th class="temps_tour">LAP TIME</th>
+          <th class="temps_tour">BEST LAP</th>
           <th class="secteur" v-if="afficheSecteurs">S1</th>
           <th class="secteur" v-if="afficheSecteurs">S2</th>
           <th class="secteur" v-if="afficheSecteurs">S3</th>
@@ -48,23 +52,20 @@
           <td class="gap">{{ pilot.gap }}</td>
           <td class="interval">{{ pilot.interval }}</td>
           <td :class="'temps_tour lap ' +  pilot.tour.couleur">{{ pilot.tour.valeur }}</td>
+          <td :class="'temps_tour lap'">{{ pilot.best_lap }}</td>
           <td v-if="afficheSecteurs" :class="'secteur s1 ' +  pilot.s1.couleur">{{ pilot.s1.valeur }}</td>
           <td v-if="afficheSecteurs" :class="'secteur s2 ' +  pilot.s2.couleur">{{ pilot.s2.valeur }}</td>
           <td v-if="afficheSecteurs" :class="'secteur s3 ' +  pilot.s3.couleur">{{ pilot.s3.valeur }}</td>
-          <td>{{ pilot.pit }}</td>
+          <td class="pit">{{ pilot.pit }}</td>
         </tr>
       </transition-group>
     </table>
 
-    <table class="classement_tfeed">
-        <tbody>
-        <tr style="border-bottom: 0px;" class="no-background">
-            <td v-if="best_lap_time !== ''" colspan="13" style="border-bottom: 0px;">
-              Best lap : {{ best_lap_time }} ({{ best_lap_pilote }}) at lap {{ best_lap_lap }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+    <div id="best_lap">
+        <div v-if="best_lap_time !== ''">
+              BEST LAP : {{ best_lap_time }} - {{ best_lap_pilote }} ON LAP {{ best_lap_lap }}
+        </div>
+    </div>
 
     <table class="classement_tfeed" >
       <tbody>
@@ -108,6 +109,7 @@
         afficheDrs: 0,
         affichePneus: 0,
         modele: 22,
+        nom_gp: '',
         vitesse: 1,
         debug: 0,
         best_lap_time: '',
@@ -133,8 +135,9 @@
     },
     methods: {
         async loadData() {
-          console.log(`/data/${this.saison}_${this.manche}.json`);
-            const responseEvents = await fetch(`/data/${this.saison}_${this.manche}.json`);            
+          let fichierData =  `${this.saison}_${this.manche}-debug.json`;
+          console.log(`/data/${fichierData}`);
+            const responseEvents = await fetch(`/data/${fichierData}`);            
             const responseConfig = await fetch('/config.json');
             try {
               const eventsData = await responseEvents.json();
@@ -145,6 +148,8 @@
               this.afficheDrs = eventsData.general.drs;
               this.affichePneus = eventsData.general.pneus;
               this.modele = eventsData.general.modele;
+              this.nom_gp = eventsData.general.nom_gp;
+              console.log(`modele ${this.modele}`);
 
               const configData = await responseConfig.json();
             
@@ -249,12 +254,15 @@
               if (event.current_lap !== undefined) {
                 this.current_lap = event.current_lap;
               }
+              if (event.best_lap !== undefined) {
+                console.log("event.best_lap=", event.best_lap);
+                pilot.best_lap = event.best_lap;
+              }
             }
-          } else if (event.type === 'bestlap') {
+          } else if (event.type === 'best_lap') {
             this.best_lap_time = event.temps;
             this.best_lap_pilote = this.eventsData.pilotes.find(p => p.numero === event.numero).nom;  
             this.best_lap_lap = event.tour;
-            console.log("bestlap avec best_lap_time=", this.best_lap_time, "best_lap_pilote=", this.best_lap_pilote, "best_lap_lap=", this.best_lap_lap);
           } else {
             if (event.race_status !== undefined) {
               if (event.race_status.css == 'decompte') {
@@ -263,15 +271,47 @@
                 this.track_status = event.race_status.texte;
               }              
               this.track_status_css = event.race_status.css;
-            }          
+            }
+            if (event.reset) {
+              this.pilots.forEach(p => {
+                p.tour.valeur = '';
+                p.s1.valeur = '';
+                p.s2.valeur = '';
+                p.s3.valeur = '';
+                p.tours = '';
+                p.pneus.type = '';
+                p.gap = '';
+                p.interval = '';
+                p.pit = '';
+                p.best_lap = '';
+              });
+              this.current_lap = 0;
+            }
           }
         }
   
         // Re-trier les pilotes en fonction de leur position
         this.pilots.sort((a, b) => a.position - b.position);
 
-        this.last_timing = events.timing;
+        this.last_timing = `${events.vrai_timing} [${this.formatDuration(events.vrai_timing)}] (timing original : ${events.timing_original})`;
       },
+      formatDuration(ms) {
+        const totalSeconds = Math.floor(ms / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        const paddedMinutes = String(minutes).padStart(2, '0');
+        const paddedSeconds = String(seconds).padStart(2, '0');
+
+        if (hours > 0) {
+          const paddedHours = String(hours).padStart(2, '0');
+          return `${paddedHours}:${paddedMinutes}:${paddedSeconds}`;
+        } else {
+          return `${minutes}:${paddedSeconds}`;
+        }
+      },
+
       replacePurpleWithGreen(colonne) {
         // Sélectionne tous les <td> qui ont à la fois les classes "s1" et "purple"
         const elements = document.querySelectorAll('td.'+colonne+'.purple');

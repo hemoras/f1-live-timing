@@ -1,0 +1,22 @@
+[
+    {
+        "template": "simple",
+        "table": {
+            "left": 0,
+            "top": 39,
+            "width": 1150,
+            "height": 748,
+            "rows": 22
+        },
+        "columns": {
+            "numero": {"debut": 60, "fin": 100},
+            "temps_tour": {"debut": 570, "fin": 700},
+            "secteur1": {"debut": 720, "fin": 800},
+            "secteur2": {"debut": 880, "fin": 950},
+            "secteur3": {"debut": 1030, "fin": 1100}
+        },
+        "videos": [
+            "01 GP Australie 2008"
+        ]
+    }
+]

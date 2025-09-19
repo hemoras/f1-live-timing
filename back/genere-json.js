@@ -7,14 +7,15 @@ const { checkAndExtractDirectory, formatTime } = require('./utils');
 const saison = process.argv[2];
 const manche = process.argv[3];
 const startIndex = parseInt(process.argv.indexOf('-start'));
+const debug = parseInt(process.argv.indexOf('-debug'));
 let start = 0;
 if (startIndex !== -1 && process.argv[startIndex + 1]) {
     start = parseInt(process.argv[startIndex + 1], 10); // Convertir en entier
 }
 
 if (!saison || !manche) {
-    console.error('Erreur : vous devez fournir la saison et la manche en paramètres.');
-    console.error('Usage : node script.js <saison> <manche>');
+    console.error('Script de génération du fichier json en utilisant les events des tables live_timing_event et live_timing_event_additionnel');
+    console.error('Usage : node script.js <saison> <manche> [-start <duree_en_minutes>]');
     process.exit(1);
 }
 
@@ -32,34 +33,34 @@ async function main() {
 
     const pneusList = await getPneusData(saison, connection);
     const raceStatusList = await getAllRaceStatus(connection);
-    const nbTours = await getNbTours(saison, manche, connection);
-    const InfosGenerales = await getInfosGenerales(connection, saison, manche);
+    const InfosGenerales = await getInfosGenerales(connection, saison, manche);    
+    let courseEn2Manches = false;
+    let manche1EnCours = false;
+    let manche2EnCours = false;
 
-    let dureePreCourse = 0; let dureePreCourseMillis = 0;
+    console.log(`Durée du décompte : ${start} minutes`);
+
+    
     let startEvents = { events: [] };
-    // StartIndex contient le nombre de minutes d'avant course : si duree_tdf est renseigné, 
-    // c'est le nombre de minutes avant le TDF, sinon, le nombre de minutes avant le départ réel
-    if (start) {        
-        if (InfosGenerales.duree_tdf) {
-            dureePreCourse = (parseFloat(InfosGenerales.duree_tdf) + start * 60);
-            startEvents = {events: [
-                {timing:0, type: "general", race_status:{texte:start*60, css:"decompte"}},
-                {timing:start * 60 * 1000, type: "general", race_status:{texte:"FORMATION LAP", css:"formation_lap"}},
-            ]};
-        } else {
-            dureePreCourse = (start * 60);
-            startEvents = {events: [
-                {timing:0, event:[{type: "general", race_status:{texte:start*60, css:"decompte"}}]},
-            ]}
-        }
-    }
-    dureePreCourseMillis = dureePreCourse * 1000;    
+    // La durée de pré course correspond au premier event additionnel (normalement un tour de formation, éventuellement une SC)
+    dureePreCourseMillis = - InfosGenerales.premier_event + start * 60 * 1000;
+
+    // Création du décompte
+    if (start !== 0) {
+        startEvents.events.push({timing:0, type: "general", race_status:{texte:start*60, css:"decompte"}});       
+    }    
     
     try {
         // Requête pour récupérer les lignes correspondant à la saison et la manche, triées par timing
         const [rows] = await connection.execute(
-            `SELECT * FROM live_timing_event WHERE saison = ? AND manche = ? ORDER BY timing`, 
-            [saison, manche]
+            `
+            (SELECT 'event' as type_event, id, saison, manche, numero, timing, race_status, current_lap, \`position\`, pneus, drs, pneus_tours, tours, gap, \`interval\`, temps_tour, s1, s2, s3, pit, abandon
+             FROM live_timing_event WHERE saison = ? AND manche = ?)
+            UNION
+            (SELECT 'event_additionnel' as type_event, id, saison, manche, numero, timing, race_status, current_lap, \`position\`, pneus, drs, pneus_tours, tours, gap, \`interval\`, temps_tour, s1, s2, s3, pit, abandon
+            FROM live_timing_event_additionnel WHERE saison = ? AND manche = ?)
+            ORDER BY timing`, 
+            [saison, manche, saison, manche]
         );
 
         // Iniatialisation des meilleurs tours / secteurs
@@ -67,48 +68,66 @@ async function main() {
         let couleurs = { tour: {}, s1:{}, s2: {}, s3: {} };
         let blap = {}; let s1 = {}; let s2 = {}; let s3 = {};
 
-        const general = {"nbTours": nbTours, "nom_gp": saison + ' ' + InfosGenerales.nom_gp, "secteurs": InfosGenerales.secteurs, "drs": InfosGenerales.drs, "pneus": InfosGenerales.pneus, "modele": InfosGenerales.modele};
+        const general = {"nbTours": InfosGenerales.tours_prevus, "nom_gp": saison + ' ' + InfosGenerales.nom_gp, "secteurs": InfosGenerales.secteurs, "drs": InfosGenerales.drs, "pneus": InfosGenerales.pneus, "modele": InfosGenerales.modele};
         const pilotes = await createInitData(saison, manche, connection);
 
-        let dureeEntreDeuxDeparts = 0; // Renseigné uniquement si les tours du premier départ s'ont pas été comptabilisés
+        let timingDepart2 = 0; // Renseigné uniquement si les tours du premier départ s'ont pas été comptabilisés
         let classementPartie1 = null;
-        // Affichage du drapeau rouge
-        if (InfosGenerales.drapeau_rouge) {
-            newEvents.events.push({
-                timing: dureePreCourseMillis + InfosGenerales.drapeau_rouge * 1000,
-                type: "general",
-                race_status: {
-                    texte: "RED FLAG",
-                    css: "red_flag"
-                }
-            });
-            if (InfosGenerales.tours_p1) {
-                classementPartie1 = await getClassementCoursePartie1(saison, manche, InfosGenerales.tours_p1, InfosGenerales.timing_depart2, connection);
-            }
-            dureeEntreDeuxDeparts = InfosGenerales.timing_depart2 * 1000;
-            newEvents.events.push({
-                timing: dureePreCourseMillis + InfosGenerales.timing_depart2 * 1000,
-                type: "general",
-                race_status: {
-                    texte: "TRACK CLEAR",
-                    css: "green_flag"
-                }
-            });
+        
+        // Course en 2 manches
+        if (InfosGenerales.tours_manche1) {
+            courseEn2Manches = true;
+            classementPartie1 = await getClassementCoursePartie1(saison, manche, connection);            
+            manche2EnCours = false;
+            manche1EnCours = true;
         }
 
+        if (InfosGenerales.depart2) {
+            timingDepart2 = InfosGenerales.depart2 * 1000;
+            // Reset si drapeau rouge : 10 minutes avant le départ 2            
+            newEvents.events.push({"timing":timingDepart2 - 10000*60, "type": "general", "reset": true});
+        }
 
-        const events = rows.map(row => {            
-            if (row.timing === 0) {
-                row.timing = parseInt(row.timing) + dureePreCourseMillis;
-            } else if (classementPartie1 && classementPartie1.find(p => p.numero === row.numero) && row.timing > classementPartie1.find(p => p.numero === row.numero).temps_total) {
-                row.timing = parseInt(row.timing) + dureePreCourseMillis + dureeEntreDeuxDeparts - classementPartie1.find(p => p.numero === row.numero).temps_total;
+        // Parcours de toutes les lignes de la table live_timing_event        
+        const events = rows.map(row => { 
+            let showLog = false;
+            row.timing_original = row.timing;
+            if (row.timing === 240171) {
+                showLog = true;
             }
-            else if (classementPartie1) {
-                row.timing = parseInt(row.timing) + dureePreCourseMillis;
-            } else {
-                row.timing = parseInt(row.timing) + dureePreCourseMillis + dureeEntreDeuxDeparts;
+            if (courseEn2Manches && row.type_event === 'event') {
+                // Si course 2 manches sur un tour de la première manche
+                if (manche1EnCours || !row.numero) {
+                    // Si on rencontre un changement de tour qui n'est pas dans la manche 1 d'après classementPartie1, on termine la manche 1 pour tous les évennements qui vont suivre
+                    if (parseInt(row.temps_tour) !== 0 && row.tours && classementPartie1 && classementPartie1.find(p => p.numero === row.numero) && row.tours > classementPartie1.find(p => p.numero === row.numero).tours) {
+                        manche1EnCours = false; 
+                        manche2EnCours = true;  
+                    } else {
+                        row.timing = parseInt(row.timing) + dureePreCourseMillis;
+                    }                    
+                }
+                // Si course 2 manches sur un tour de la seconde manche       
+                if (manche2EnCours && row.numero) {
+                    row.timing = parseInt(row.timing) + timingDepart2 + dureePreCourseMillis - classementPartie1.find(p => p.numero === row.numero).temps_total;
+                }
+            } else { // Cas normal : Course en une seule manche ou timing additionnel                
+                if (row.type_event === 'event_additionnel') { // Si c'est une course en 2 manches, c'est que c'est un temps additionnel, on n'ajoute pas timingDepart2
+                    row.timing = parseInt(row.timing) + dureePreCourseMillis;
+                }                 
+                else { // Course en 1 seule manche (avec ou sans drapeau rouge)
+                    if (row.timing === 0) {
+                        row.timing = parseInt(row.timing) + dureePreCourseMillis;
+                    } else {
+                        row.timing = parseInt(row.timing) + dureePreCourseMillis + timingDepart2;   
+                    }                    
+                }                
             }
-            const event = { timing: row.timing };
+            if (showLog) {
+                showLog = false;
+            }
+            
+            // Création de l'event
+            const event = { timing: row.timing, timing_original: row.timing_original };
             if (row.numero !== null) {
                 event.type = 'pilote';
                 event.numero = row.numero;
@@ -117,7 +136,7 @@ async function main() {
             }
 
 
-            // Ajout de chaque champ non nul
+            // Ajout de chaque champ non null
             Object.keys(row).forEach(key => {
                 if (row[key] !== null && key !== 'id' && key !== 'saison' && key !== 'manche' && key !== 'numero' && key !== 'timing') {
                     if (key === 'abandon') {
@@ -135,16 +154,16 @@ async function main() {
                             console.log(`status ${row[key]} introuvable`);
                         }
                     }
-                    else if (key === 'temps_tour') {
+                    else if (key === 'temps_tour') {                        
                         let couleur = 'white';
                         let time = parseFloat(row[key]);
-                        if (! blap?.best || blap?.best > time) {
+                        if (time !== 0 && (! blap?.best || blap?.best > time)) {
                             blap.best = time;
                             blap[event.numero] = time;
                             couleur = 'purple';
                             // Si il y a un autre pilote en purple, on le repasse en vert
                             const purpleTrouve = Object.entries(couleurs.tour).find(([key, value]) => value === 'purple')?.[0];
-                            if (purpleTrouve) {                                
+                            if (purpleTrouve && purpleTrouve != row.numero) {
                                 newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": parseInt(purpleTrouve), "tour": {"couleur": "green"}});
                                 couleurs.tour[parseInt(purpleTrouve)] = 'green';                                
                             }    
@@ -154,7 +173,8 @@ async function main() {
                             // On met à jour le meilleur tour du pilote en cours
                             if (row.tours > 1)
                                 newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": row.numero, "best_lap": formatTime(time)});
-                        } else if (!blap[event.numero] || blap[event.numero] > time) {
+                        } else if (time !== 0  && (!blap[event.numero] || blap[event.numero] > time) && row.timing > InfosGenerales.depart2 * 1000) {
+                            if (event.numero === 5) console.log(`depart2=${InfosGenerales.depart2}, timinh=${row.timing}, tour=${row.tours}, time=${time}, blap.best=${blap?.best}, blap[event.numero]=${blap[event.numero]}, blap?.best=${blap?.best}, row[key]=${row[key]}`);
                             blap[event.numero] = time;
                             couleur = 'green';
                             // On met à jour le meilleur tour du pilote en cours
@@ -162,7 +182,8 @@ async function main() {
                                 newEvents.events.push({"timing":row.timing, "type": "pilote", "numero": row.numero, "best_lap": formatTime(time)});
                         }
                         if (row.tours == 1) couleur = 'white';
-                        event.tour = {"valeur": formatTime(row[key]), "couleur": couleur};
+                        if (time !== 0) event.tour = {"valeur": formatTime(row[key]), "couleur": couleur};
+                        else event.tour = {"valeur": '', "couleur": couleur};
                         couleurs.tour[event.numero] = couleur; // Pour savoir qui est actuellement en purple
                     } else if (key === 's1') {
                         let couleur = 'white';
@@ -231,18 +252,13 @@ async function main() {
                         event.position = 1;
                         event.gap = '';
                         event.interval = '';
-                    } else
+                    } else if (key !== 'type_event')
                         event[key] = row[key];
                 }
             });
 
             return event;
         });
-
-        //console.log(newEvents);
-        //console.log('-----------');
-        //console.log(startEvents);
-        //console.log(couleurs.s1);
 
         let mergedEvents = events.concat(startEvents.events).concat(newEvents.events).sort((a, b) => a.timing - b.timing);
 
@@ -257,7 +273,8 @@ async function main() {
               // Créer un nouveau groupe avec cet événement
               acc.push({
                 timing: event.timing,
-                event: [event]
+                event: [event],
+                timing_original: event.timing_original
               });
             }
           
@@ -275,6 +292,7 @@ async function main() {
         // Écriture du fichier JSON
         await fs.writeFile(filePath, JSON.stringify(result, null, 2), 'utf8');
         console.log(`Fichier JSON généré avec succès : ${filePath}`);
+        if (debug !== -1 && debug) await creerDebugJson(saison, manche);
         
     } catch (error) {
         console.error('Erreur lors de la récupération des données:', error);
@@ -283,6 +301,27 @@ async function main() {
     }
 }
 
+async function creerDebugJson(saison, manche) {
+    const inputFile = path.join(__dirname, '..\\front\\public\\data',`${saison}_${manche}.json`);
+    const outputFile = path.join(__dirname, '..\\front\\public\\data',`${saison}_${manche}-debug.json`);
+
+    const contenu = await fs.readFile(inputFile, 'utf8');
+    const data = JSON.parse(contenu);
+
+    // Modifier les timings des events
+    data.events = data.events.map((event, index) => {
+    return {
+        ...event,
+        timing: index * 500,
+        vrai_timing: event.timing
+    };
+    });
+
+    // Sauvegarder dans un nouveau fichier
+    await fs.writeFile(outputFile, JSON.stringify(data, null, 2), 'utf8');
+
+    console.log(`Fichier debug sauvegardé sous ${outputFile}`);
+}
 
 async function createInitData(saison, manche, connection) {
     const [rows] = await connection.execute(
@@ -353,50 +392,33 @@ async function getPneusData(saison, connection) {
     return { pneus: result };
 }
 
-async function getClassementCoursePartie1(saison, manche, tour, timing_depart2, connection) {
+async function getClassementCoursePartie1(saison, manche, connection) {
     const [rows] = await connection.execute(`
-        select numero, if(max(tours)<6,${timing_depart2},sum(temps_tour)) as temps_total
-        from live_timing_event
+        SELECT numero, temps_total, tours
+        from live_timing_manche1 ltm 
         where saison = ? and manche = ?
-        and tours <= ?
-        group by numero;
-    `, [saison, manche, tour]);
+    `, [saison, manche]);
 
     // Formater les résultats sous forme d'objet JSON
     const result = rows.map(row => ({
         numero: row.numero,
-        temps_total: row.temps_total * 1000
+        temps_total: row.temps_total * 1000,
+        tours: row.tours
     }));
 
     return result;
 }
 
-async function getNbTours(saison, manche, connection) {
-    try {
-      // Exécution de la requête SELECT avec les paramètres saison et manche
-      const [rows] = await connection.execute(
-        'SELECT tours FROM statsf1_grand_prix WHERE saison = ? AND manche = ?',
-        [saison, manche]
-      );
-  
-      // Vérification si un résultat a été retourné
-      if (rows.length > 0) {
-        return rows[0].tours; // Retourne la valeur unique de "tours"
-      } else {
-        return null; // Retourne null si aucun résultat trouvé
-      }
-    } catch (error) {
-      console.error('Erreur lors de la récupération de la valeur:', error);
-      throw error;
-    }
-  }
-
   async function getInfosGenerales(connection, saison, manche) {
     try {
         const query = `
-            SELECT *
-            FROM live_timing
-            WHERE saison = ? AND manche = ?
+            SELECT lt.saison, lt.manche, lt.nom_gp, lt.secteurs , lt.modele , lt.arrivee , lt.tours_manche1 , lt.tours_prevus, 
+                lt.secteurs , lt.drs , lt.pneus, lt.depart2, min(a.timing) as premier_event
+            FROM live_timing lt
+            LEFT JOIN live_timing_event_additionnel a on a.saison = lt.saison and a.manche = lt.manche 
+            WHERE lt.saison = ? AND lt.manche = ?
+            GROUP BY lt.saison, lt.manche, lt.nom_gp, lt.secteurs , lt.modele , lt.arrivee , lt.tours_manche1 , lt.tours_prevus,
+                lt.secteurs , lt.drs , lt.pneus, lt.depart2
         `;
         const [rows] = await connection.execute(query, [saison, manche]);
         

@@ -10,7 +10,7 @@ const saison = process.argv[2];
 const manche = process.argv[3];
 
 if (!saison || !manche) {
-    console.error('Erreur : vous devez fournir la saison et la manche en paramètres.');
+    console.error('Script de génération des events de la table live_timing_event');
     console.error('Usage : node script.js <saison> <manche>');
     process.exit(1);
 }
@@ -192,8 +192,8 @@ async function extractFromTfeed(connection, saison, manche) {
     
     
     // Création des infos générales
-    const modele = nbPilotes % 2 === 0 ? nbPilotes : nbPilotes + 1;
-    insertLiveTiming(connection, saison, manche, true, true, true, modele);
+    //const modele = nbPilotes % 2 === 0 ? nbPilotes : nbPilotes + 1;
+    //insertLiveTiming(connection, saison, manche, true, true, true, modele);
 
     let previousData = null;
     let nbTours = await getNbTours(saison, manche, connection);
@@ -228,7 +228,8 @@ async function extractFromTfeed(connection, saison, manche) {
     }
 }
 
-async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, timing, nbTours) {
+async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, timing, nbTours, tempsAdditionnel = false) {
+    const table = tempsAdditionnel ? 'live_timing_event_additionnel' : 'live_timing_event';
     // Crée un dictionnaire des oldItems pour les retrouver facilement par numero
     const oldItemsDict = oldItems.reduce((acc, item) => {
       acc[item.numero] = item;
@@ -257,6 +258,10 @@ async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connectio
                 changes.race_status = 9;
             }
         }
+
+        if (changes.timing < 0) {
+            console.log(`⚠️ Timing négatif : ${changes.timing} pour pilote ${newItem.numero}`);
+        }
   
         // Si des différences sont trouvées, les insérer ou mettre à jour dans la table live_timing_event
         if (Object.keys(changes).length > 0) {
@@ -271,7 +276,7 @@ async function compareAndInsertOrUpdateDifferences(oldItems, newItems, connectio
                 .join(', ');
         
                 await connection.execute(
-                  `INSERT INTO live_timing_event (saison, manche, ${columns}) VALUES (${saison}, ${manche}, ${placeholders})
+                  `INSERT INTO ${table} (saison, manche, ${columns}) VALUES (${saison}, ${manche}, ${placeholders})
                    ON DUPLICATE KEY UPDATE ${updates}`,
                   values
                 );
@@ -285,6 +290,8 @@ async function insertPitstopEvents(saison, manche, connection) {
     const [result] = await connection.execute(`select * from live_timing where saison=? and manche=?`,[saison, manche]);
     ligneArrivee = result[0].arrivee;
 
+    const tempsDefault = await getTempsDefault(saison, manche, connection);
+
     const NbPitstops = [];
 
     for (const pitstop of pitstops) {
@@ -294,6 +301,7 @@ async function insertPitstopEvents(saison, manche, connection) {
         pitstop.temps_total_precedent = parseFloat(pitstop.temps_total_precedent);
         pitstop.tour_precedent = parseFloat(pitstop.tour_precedent);
         pitstop.tour = parseFloat(pitstop.tour);
+        pitstop.duree = parseFloat(pitstop.duree);
         pitstop.tour_suivant = parseFloat(pitstop.tour_suivant);
         if (ligneArrivee === 'avant') {
             entreePit = pitstop.temps_total * 1000;
@@ -307,8 +315,13 @@ async function insertPitstopEvents(saison, manche, connection) {
             // Si on a pas de temps total pour ce tour, c'est que le pilote s'est arrêté pour abandonné. 
             // On prend le temps total du tour précédent et on lui ajoute le tour précédent + 20 secondes
             if (Number.isNaN(pitstop.temps_total)) {
-                sortiePit = (pitstop.temps_total_precedent + pitstop.tour_precedent + 20) * 1000;
-                entreePit = (pitstop.temps_total_precedent + pitstop.tour_precedent) * 1000;
+                if (Number.isNaN(pitstop.temps_total_precedent)) {
+                    entreePit = Math.round((tempsDefault + 10) * 1000);
+                    sortiePit = entreePit + 20 * 1000;
+                } else {
+                    sortiePit = (pitstop.temps_total_precedent + pitstop.tour_precedent + 20) * 1000;
+                    entreePit = (pitstop.temps_total_precedent + pitstop.tour_precedent) * 1000;    
+                }
                 pitstop.abandon = 1;
             } else {
                 sortiePit = pitstop.temps_total * 1000;
@@ -331,19 +344,34 @@ async function insertPitstopEvents(saison, manche, connection) {
         }
 
         // Insertion de l'entrée des stands
-        let insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, pit, abandon) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?, abandon=?`;
-        await connection.execute(insertQuery, [saison, manche, pitstop.numero, entreePit, NbPitstops[pitstop.numero], 2, entreePit, 2]);
+        let insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, pit, abandon) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?, pit=?, abandon=?`;
+        await connection.execute(insertQuery, [saison, manche, pitstop.numero, entreePit, NbPitstops[pitstop.numero], 2, entreePit, NbPitstops[pitstop.numero], 2]);
+        if (entreePit < 0 || Number.isNaN(entreePit)) {
+            console.log(`⚠️ Timing négatif : ${entreePit} pour l'entrée du stand du pilote numéro ${pitstop.numero} au tour ${pitstop.tour}`);
+        }
 
         // Insertion de la sortie des stands
         insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, abandon) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?, abandon=?`;
         await connection.execute(insertQuery, [saison, manche, pitstop.numero, sortiePit, pitstop.abandon? 9:3, sortiePit, pitstop.abandon? 9:3]);
+        if (sortiePit < 0 || Number.isNaN(sortiePit)) {
+            console.log(`⚠️ Timing négatif : ${sortiePit} pour le sortie du stand du pilote numéro ${pitstop.numero} au tour ${pitstop.tour}`);
+        }
     }
 }
 
 async function insertAbandonEvents(saison, manche, connection) {
     const abandons = await getAbandons(saison, manche, connection);
+    const tempsDefault = await getTempsDefault(saison, manche, connection);
+
     for (const abandon of abandons) {
-        const timing = (parseFloat(abandon.temps_total) + parseFloat(abandon.meilleur_temps_tour) + 10) * 1000;
+        let timing = (parseFloat(abandon.temps_total) + parseFloat(abandon.meilleur_temps_tour) + 10) * 1000;
+        if (! abandon.meilleur_temps_tour) {
+            timing = (tempsDefault + 10) * 1000;
+        }
+                
+        if (timing < 0 || Number.isNaN(timing)) {
+            console.log(`⚠️ Timing négatif : ${timing} pour abandon pilote ${abandon.numero}, temps_total=${abandon.temps_total}, meilleur_temps_tour=${abandon.meilleur_temps_tour}`);
+        }
         // Insertion de l'abandon des stands
         let insertQuery = `INSERT INTO live_timing_event (saison, manche, numero, timing, abandon) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE timing=?`;
         await connection.execute(insertQuery, [saison, manche, abandon.numero, timing, 1, timing]);
@@ -354,8 +382,6 @@ async function insertAbandonEvents(saison, manche, connection) {
   function recalculPosition(data) {
     // Filtrer les données pour ne garder que celles avec un temps de tour défini
   const filteredData = data;
-
-  const timingDebug = data.find(item => item.numero === 1).timing;
 
   // Trier les données par tours décroissant, secteursParcourus décroissant, et timing croissant
   filteredData.sort((a, b) => {
@@ -388,7 +414,7 @@ clear
   return [...result];
   }
 
-async function extractFromLapTimes(connection, saison, manche) {
+async function extractFromLapTimes(saison, manche, connection, toursAnnules = false) {
 
     let oldItems = [];
     let newItems = [];
@@ -413,10 +439,10 @@ async function extractFromLapTimes(connection, saison, manche) {
     newItems = newItems.filter(item => item !== null);
 
     // Création des infos générales
-    insertLiveTiming(connection, saison, manche, false, false, false, grilleDepart.length);
+    // insertLiveTiming(connection, saison, manche, false, false, false, grilleDepart.length);
 
     
-    const tempsTour = await getTempsTour(connection, saison, manche);
+    const tempsTour = await getTempsTour(connection, saison, manche, toursAnnules);
     for (const temps of tempsTour) {
         // Calcul du secteur
         let secteursParcourus = 0;
@@ -445,12 +471,26 @@ async function extractFromLapTimes(connection, saison, manche) {
             itemToUpdate.gap = calculEcart(itemToUpdate, itemPremier);
             itemToUpdate.interval = calculEcart(itemToUpdate, itemPrecedent);
         }
-        await compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, itemToUpdate.timing, nbTours);
+        await compareAndInsertOrUpdateDifferences(oldItems, newItems, connection, itemToUpdate.timing, nbTours, toursAnnules);
         // On met à jour oldItems
         oldItems = JSON.parse(JSON.stringify(newItems)).filter(item => item !== null);
     }
     
 }
+
+async function purgeLiveTimingEvent(saison, manche, connection) {
+  try {
+    const [result] = await connection.execute(
+      'DELETE FROM live_timing_event WHERE saison = ? AND manche = ?',
+      [saison, manche]
+    );
+    console.log(`Purge réussie : ${result.affectedRows} ligne(s) supprimée(s).`);
+  } catch (error) {
+    console.error('Erreur lors de la suppression :', error);
+    throw error;
+  }
+}
+
 
 function calculEcart(itemPilote, itemPiloteReference) {
     let ecart;
@@ -466,8 +506,10 @@ function calculEcart(itemPilote, itemPiloteReference) {
 async function main() {
     const connection = await mysql.createConnection(dbConfig);
     try {
-        if (saison <= 2006) {
-            await extractFromLapTimes(connection, saison, manche);
+        if (saison <= 2009) {
+            await purgeLiveTimingEvent(saison, manche, connection);
+            await extractFromLapTimes(saison, manche, connection, false);
+            await extractFromLapTimes(saison, manche, connection, true); // Insertion des temps annulés si drapeau rouge
             await insertAbandonEvents(saison, manche, connection);
             await insertPitstopEvents(saison, manche, connection);
         }
@@ -520,10 +562,11 @@ async function getNbTours(saison, manche, connection) {
     }
 }
 
-async function getTempsTour(connection, saison, manche) {
+async function getTempsTour(connection, saison, manche, toursAnnules = false) {
+    const table = toursAnnules ? 'tour_par_tour_annule' : 'tour_par_tour';
   const query = `
     SELECT numero, tour, position, temps_total as timing, s1, s2, s3, temps_tour, temps_total
-    FROM tour_par_tour tpt
+    FROM ${table} tpt
     WHERE saison = ? AND manche = ?
     AND temps_total <> 0
     order by temps_total;
@@ -592,6 +635,25 @@ const getPitstops = async (saison, manche, connection) => {
 
         // Retourne les résultats sous forme de JSON
         return rows;
+    } catch (error) {
+        console.error('Erreur lors de la récupération des résultats de pitstop:', error);
+        throw error;
+    }
+};
+
+const getTempsDefault = async (saison, manche, connection) => {
+    try {
+        // Exécute la requête pour récupérer les résultats
+        const [rows] = await connection.execute(
+            `select temps + 5 as temps
+            from statsf1_meilleur_tour mt
+            left join statsf1_grand_prix gp on gp.id_grand_prix = mt.id_grand_prix  
+            where saison = ? and manche = ? and position = 1`,
+            [saison, manche]
+        );
+
+        // Retourne les résultats sous forme de JSON
+        return rows[0].temps;
     } catch (error) {
         console.error('Erreur lors de la récupération des résultats de pitstop:', error);
         throw error;

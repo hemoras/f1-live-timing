@@ -18,6 +18,27 @@ body {
   margin: 0px;
 }
 
+.container-gauche {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 160px; /* ou ce que tu veux */
+  height: 100vh; /* toute la hauteur visible */
+  display: flex;
+  align-items: center;
+  justify-content: center; /* juste au cas où */
+  background-color: transparent; /* ou une couleur de fond si besoin */
+}
+
+.nom_gp {
+  font-family: "Futura Light";
+  transform: rotate(-90deg);
+  white-space: nowrap;
+  color: white;
+  font-size: 34px;
+  text-align: center;
+}
+
 table.classement_tfeed {
   border-collapse: collapse;
   font-family: "Futura Light";
@@ -62,6 +83,16 @@ table.classement_tfeed tr.modele_22 {
 table.classement_tfeed tr.modele_24 {
   height: 28px;
   font-size: 20px;
+}
+
+table.classement_tfeed tr.modele_25 {
+  height: 26px;
+  font-size: 19px;
+}
+
+table.classement_tfeed tr.modele_26 {
+  height: 26px;
+  font-size: 18px;
 }
 
 @-moz-document url-prefix() {
@@ -261,9 +292,19 @@ table.classement_tfeed #weather table tr td {
   border-bottom: 0px;
 }
 
+#best_lap {
+  width: 100%;
+  text-align: center;
+  font-family: "Futura Heavy";
+  color: white;
+  font-size: 1.2em;
+  margin-top: 5px;
+  height: 15px;
+}
+
 #timer {
   width: 100px;
-  margin-top: 20px;
+  margin-top: 10px;
   float: right;
   font-family: "Futura Heavy";
   color: white;

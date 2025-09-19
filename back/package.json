@@ -1,6 +1,10 @@
 {
   "dependencies": {
+    "csv-write-stream": "^2.0.0",
+    "csv-writer": "^1.6.0",
     "mysql2": "^3.11.3",
+    "sharp": "^0.34.1",
+    "tesseract.js": "^6.0.1",
     "unzipper": "^0.12.3"
   }
 }
